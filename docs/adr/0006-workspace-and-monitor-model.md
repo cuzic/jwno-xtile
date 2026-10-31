@@ -47,3 +47,7 @@ xmonad のワークスペースはモニタごとに表示される（Xinerama�
   （レジストリ `VirtualDesktops` を読む実装）。窓には `desktop-info {:id :name}` が付く。
 - **未確認**: 他プロセスのウィンドウを動かせるか（`MoveWindowToDesktop`）、`VirtualDesktopAccessor.dll` の
   動作、Windows 10/11 でのビルド依存。案 1 か 2 かの決定にはまだ足りない。
+
+## ADR 0010 との関係（2026-10-31）
+ADR 0010 の段階 1 は、仮想デスクトップの番号 → タグの**読み取り専用**の対応だけを先に入れる（観測側。`:goto`/`:send` は束縛しない）。
+案 1（VD = ワークスペース）の読み取り側を先取りするもので、案 2（自前の hide/show）が選ばれたら作り直す。

@@ -70,3 +70,9 @@ StackSet 的なモデルで「各ウィンドウの矩形」を決める。橋�
   → 緩和策 A/B/C を実測で比較した（ADR 0009 の未決事項。なしは 0/10、A は 10/10、B は 150ms 以上で 10/10、C は 10/10 だが点滅）。
 - **まだ未測定**: 項目 1（管理対象外ウィンドウの通知元）、`window-moved` の戻し、`transform` と自前
   `SetWindowPos` の比較。緩和策は実機での再確認。
+
+## ADR 0010 との関係（2026-10-31）
+ADR 0010（Jwno アダプタ）は案 1 の変種を**条件付きで**採る: Jwno に窓を管理させつつ、窓の tags の `:swp-flags`
+（`SWP_NOMOVE|SWP_NOSIZE`）で Jwno 自身の配置・retile・復元を無効化し、Core の矩形だけを `window :transform` で適用する。
+上の「そのままでは成り立たない」の反論（二重配置・retile での上書き）への答えがこれ。条件は ADR 0010 の契約テスト（Windows）で
+二重配置・retile・最大化を確かめること。それが済むまで本 ADR は Proposed のまま。
