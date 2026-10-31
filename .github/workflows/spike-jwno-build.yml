@@ -10,6 +10,7 @@ env:
   JWNO_REF: "758edf38e32a5ea28b1016b9c5d559240d320b10"   # 0.9.16
   JANET_VERSION: "1.40.1"                                  # what Jwno pins
   JANET_DIR: "${{ github.workspace }}\\janet"
+  JANET_SOURCE_PATH: "${{ github.workspace }}\\janet_src"
   JANET_PATH: "${{ github.workspace }}\\janet\\Library"
   JANET_BINPATH: "${{ github.workspace }}\\janet\\bin"
   JANET_HEADERPATH: "${{ github.workspace }}\\janet\\C"
@@ -37,6 +38,13 @@ jobs:
         with:
           arch: x64
           sdk: ${{ env.WIN_SDK_VERSION }}
+
+      - name: Janet source (jw32 builds against its headers)
+        uses: actions/checkout@v4
+        with:
+          repository: janet-lang/janet
+          path: ${{ env.JANET_SOURCE_PATH }}
+          ref: v${{ env.JANET_VERSION }}
 
       - name: Install Janet
         shell: pwsh
