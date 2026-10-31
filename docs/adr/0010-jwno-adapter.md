@@ -1,6 +1,6 @@
 # 0010. Jwno アダプタ: ポートの実装、フック→event の変換、Jwno との分担
 
-- 状態: Accepted（改訂 4: Opus レビュー 3 回で収束、2026-10-31。実装は未了。API はソースを読んだだけで Windows 未検証。ADR 0004 は契約テストまで Proposed）
+- 状態: Accepted（改訂 4: Opus レビュー 3 回で収束、2026-10-31。段階 1 の `adapter.janet` はフェイクのテストで検査済み。`win32.janet` と設定例は書いたが未実行。API はソースを読んだだけで Windows 未検証。ADR 0004 は契約テストまで Proposed）
 - 日付: 2026-10-31
 
 ## Context
