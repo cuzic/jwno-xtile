@@ -1,0 +1,41 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  JANET_VERSION: v1.42.1
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Janet (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL -o janet.tgz "https://github.com/janet-lang/janet/releases/download/${JANET_VERSION}/janet-${JANET_VERSION}-linux-x64.tar.gz"
+          mkdir janet && tar -xzf janet.tgz -C janet --strip-components=1
+          echo "$PWD/janet/bin" >> "$GITHUB_PATH"
+
+      - name: Install Janet (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = $env:JANET_VERSION.TrimStart('v')
+          Invoke-WebRequest "https://github.com/janet-lang/janet/releases/download/$env:JANET_VERSION/janet-$v-windows-x64-installer.msi" -OutFile janet.msi
+          Start-Process msiexec.exe -Wait -ArgumentList '/i', 'janet.msi', '/qn', '/norestart'
+          "C:\Program Files\Janet\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Janet version
+        run: janet -v
+
+      - name: Core + shell tests
+        run: janet test/run.janet
