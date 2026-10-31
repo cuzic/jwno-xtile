@@ -78,15 +78,15 @@ $x = & $Jwno -x "retile" 2>&1 | Out-String
 Act ("retile client output: {0}" -f $x.Trim())
 Start-Sleep 2; Rect "A after-retile" $hA; Rect "B after-retile" $hB; Rect "C after-retile" $hC
 
-# S6 removal: force-kill B, wait with NO focus change, then change focus
-Act "kill B (Stop-Process), no focus change for 5s"
+# S6 removal of a background window: force-kill B, wait with NO focus change, then make a REAL focus change
+Act "kill B (Stop-Process); no focus change for 5s"
 Stop-Process -Id $B.Id -Force; Start-Sleep 5
-Act "now change focus to A"
-Focus $hA "A(after-kill)" $true 2000
-# S7 graceful close of C
-Act "close C gracefully"
-[void]$C.CloseMainWindow(); Start-Sleep 4
-Focus $hA "A(after-close)" $true 2000
+Act "real focus change A -> C"
+Focus $hC "C(after-kill)" $true 2000
+# S7 removal of the foreground window: close C while it is in front; focus falls to something else by itself
+Act "close C gracefully while it is the foreground window"
+[void]$C.CloseMainWindow(); Start-Sleep 5
+Act ("after close: fg={0} (A is {1})" -f (Ptr ([F]::GetForegroundWindow())), (Ptr $hA))
 
 Act ("jwno alive at end={0}" -f (-not $j.HasExited))
 if (-not $j.HasExited) { Stop-Process -Id $j.Id -Force }
@@ -97,7 +97,7 @@ $lines = @()
 if (Test-Path $env:SPIKE_LOG) { $lines += Get-Content $env:SPIKE_LOG }
 if (Test-Path $act) { $lines += Get-Content $act }
 if (Test-Path $rects) { $lines += Get-Content $rects }
-$lines | Where-Object { $_ -match '^\d+\.\d+ ' } | Sort-Object { [double]($_ -split ' ', 2)[0] } |
+$lines | Where-Object { $_ -match '^\d+\.\d+ ' } | Sort-Object -Stable { [double]($_ -split ' ', 2)[0] } |
   Out-File -Encoding utf8 (Join-Path $Out "timeline.txt")
 Write-Host "===== timeline ====="
 Get-Content (Join-Path $Out "timeline.txt")
