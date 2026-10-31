@@ -41,13 +41,20 @@
 
 # Instrument Jwno's OWN focus moves (ADR 0004 item 5): shadow the window manager's methods on the
 # instance so every call Jwno makes itself is logged, then delegate to the original.
+# Mitigation A (experiment): when the file named by $SPIKE_MODE contains "A", Jwno's own
+# :set-focus-to-hwnd is swallowed (logged as :jwno-set-focus-suppressed).
+(def mode-path (os/getenv "SPIKE_MODE"))
+(defn mode [] (if mode-path (try (string/trim (slurp mode-path)) ([_] "")) ""))
+
 (let [wm (in jwno/context :window-manager)]
   (each name [:set-focus-to-hwnd :set-focus-to-desktop]
     (def orig (in wm name))
     (put wm name
          (fn [self & args]
            (rec (keyword "jwno-" name) ;args)
-           (orig self ;args)))))
+           (if (and (= name :set-focus-to-hwnd) (= (mode) "A"))
+             (rec :jwno-set-focus-suppressed ;args)
+             (orig self ;args))))))
 
 # What does Jwno think the desktops are?
 (ev/spawn
