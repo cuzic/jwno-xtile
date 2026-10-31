@@ -182,6 +182,10 @@
     (defer (put rt :busy false)
       (def [ok1 area] (call rt :work-area))
       (when ok1 (process-one rt [:screen-changed area]))
+      # align the core's :current with the OS before any window is placed or focused;
+      # otherwise the first :focus could make the OS switch desktops (ADR 0010 N1)
+      (def [okd tag] (call rt :current-desktop))
+      (when (and okd tag) (process-one rt [:desktop-changed tag]))
       (def [ok2 snap] (call rt :enumerate))
       (when ok2 (process-one rt [:windows-observed snap]))
       (observe-front rt false)

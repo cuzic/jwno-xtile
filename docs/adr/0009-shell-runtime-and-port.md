@@ -59,6 +59,7 @@ ADR 0001/0005 は Shell の規約（state を保存してから effect を実行
 - **R-6 `:close` の直前確認**: `:close id` の実行直前に `(foreground-is? id)` を確かめ、偽なら実行せず
   `notify :ignored-close` とログ。`:send` は確認しない（データを失わないので意図的。L4）。
 - **R-7 起動**: アダプタは **フックを先に登録**し、`start` は busy のまま `[:screen-changed (work-area)]`、
+  **`[:desktop-changed (current-desktop)]`（tag が引ければ。ADR 0010 N1: Core の `:current` を OS に合わせる）**、
   `[:windows-observed (enumerate)]`、再観測を処理し、その間に溜まった event を drain する（取りこぼし防止。
   重複は冪等性が吸収。M5）。
 - **R-8 失敗の回復**: バッチの effect が 1 つでも投げたら、`:later`（**1 秒**。R-4 の遅延再観測より長くし、ユーザー操作と

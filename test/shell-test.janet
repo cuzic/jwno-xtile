@@ -370,3 +370,17 @@
   (array/clear (os :calls))
   (run-later! os)                           # three timers (and re-observations) fire
   (is (<= (length (filter |(= (first $) :focus) (os :calls))) 1)))
+
+(deftest "R-7/N1: start aligns the core's :current with the OS desktop before windows are observed"
+  (def os (fake-os))
+  (array/push (os :windows) :a)
+  (put os :desktop "3")
+  (def r (make-rt os))
+  (rt/start r)
+  (is= "3" ((rt/state r) :current))
+
+  # an unknown desktop (nil) leaves the initial workspace alone and does not crash
+  (def os2 (fake-os))
+  (def r2 (make-rt os2))
+  (rt/start r2)
+  (is= "1" ((rt/state r2) :current)))
