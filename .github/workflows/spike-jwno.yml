@@ -122,7 +122,7 @@ jobs:
         if: always()
         continue-on-error: true
         shell: pwsh
-        run: ./xtile/spike/run-jwno.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -Config "${{ github.workspace }}\spike\probe-config.janet" -Out spike-out
+        run: ./xtile/spike/run-jwno.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -Config "${{ github.workspace }}\xtile\spike\probe-config.janet" -Out spike-out
 
       - name: Upload logs
         if: always()

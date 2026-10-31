@@ -27,5 +27,7 @@ if (-not $j.HasExited) {
 foreach ($f in "hooks.log", "jwno-own.log") {
   $p = Join-Path $Out $f
   Write-Host "===== $f ====="
-  if (Test-Path $p) { Get-Content $p -Tail 200 } else { Write-Host "(missing)" }
+  if (-not (Test-Path $p)) { Write-Host "(missing)"; continue }
+  if ($f -eq 'jwno-own.log') { Get-Content $p | Where-Object { $_ -notmatch 'msg-wndproc|^\S+ \S+ \[debug\] (hwnd|msg|wparam|lparam) =' } | Select-Object -Last 120 }
+  else { Get-Content $p }
 }

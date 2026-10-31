@@ -9,7 +9,8 @@ function Step($name, [scriptblock]$f) {
   Write-Host ("[{0}] {1}" -f $name, ($r[$name] | ConvertTo-Json -Compress -Depth 4))
 }
 
-Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
 [ComImport, Guid("A5CD92FF-29BE-454C-8D04-D82879FB3F1B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -25,9 +26,15 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT r, int sz);
   [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
-  public static IVirtualDesktopManager Vdm() {
-    return (IVirtualDesktopManager)Activator.CreateInstance(
-      Type.GetTypeFromCLSID(new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A")));
+  public static string VdmQuery(IntPtr h) {
+    try {
+      var v = (IVirtualDesktopManager)Activator.CreateInstance(
+        Type.GetTypeFromCLSID(new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A")));
+      bool on; Guid g;
+      int h1 = v.IsWindowOnCurrentVirtualDesktop(h, out on);
+      int h2 = v.GetWindowDesktopId(h, out g);
+      return "is_on_current_hr=" + h1 + " on_current=" + on + " desktop_id_hr=" + h2 + " desktop_id=" + g;
+    } catch (Exception e) { return "ERROR: " + e.GetType().Name + ": " + e.Message; }
   }
 }
 "@
@@ -74,12 +81,7 @@ Step "dwm_frame_a" {
   [ordered]@{ window_rect = "$($wr.L),$($wr.T),$($wr.R),$($wr.B)"; extended_frame = "$($fr.L),$($fr.T),$($fr.R),$($fr.B)"; hr = $hr
               margins_lrtb = @(($fr.L-$wr.L), ($fr.T-$wr.T), ($wr.R-$fr.R), ($wr.B-$fr.B)) }
 }
-Step "vdm_public_com" {
-  $v = [W]::Vdm(); $on = $false; $g = [Guid]::Empty
-  $h1 = $v.IsWindowOnCurrentVirtualDesktop($script:a.MainWindowHandle, [ref]$on)
-  $h2 = $v.GetWindowDesktopId($script:a.MainWindowHandle, [ref]$g)
-  [ordered]@{ is_on_current_hr = $h1; on_current = $on; desktop_id_hr = $h2; desktop_id = $g.ToString() }
-}
+Step "vdm_public_com" { [W]::VdmQuery($script:a.MainWindowHandle) }
 function Desktops {
   $k = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
   $p = Get-ItemProperty $k -ErrorAction SilentlyContinue
@@ -92,9 +94,7 @@ Step "vd_create_win_ctrl_d" {
   foreach ($k in 0x5B, 0x11, 0x44) { [W]::keybd_event($k, 0, 0, [UIntPtr]::Zero) }
   foreach ($k in 0x44, 0x11, 0x5B) { [W]::keybd_event($k, 0, 2, [UIntPtr]::Zero) }
   Start-Sleep 2
-  $v = [W]::Vdm(); $on = $true
-  $h = $v.IsWindowOnCurrentVirtualDesktop($script:a.MainWindowHandle, [ref]$on)
-  [ordered]@{ registry_after = (Desktops); a_still_on_current = $on; hr = $h }
+  [ordered]@{ registry_after = (Desktops); vdm = [W]::VdmQuery($script:a.MainWindowHandle) }
 }
 Step "cleanup" {
   foreach ($p in @($script:a, $script:b)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
