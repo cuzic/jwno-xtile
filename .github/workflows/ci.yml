@@ -34,7 +34,7 @@ jobs:
           $v = $env:JANET_VERSION.TrimStart('v')
           Invoke-WebRequest "https://github.com/janet-lang/janet/releases/download/$env:JANET_VERSION/janet-$v-windows-x64-installer.msi" -OutFile janet.msi
           Start-Process msiexec.exe -Wait -ArgumentList '/i', 'janet.msi', '/qn', '/norestart'
-          $exe = Get-ChildItem -Path 'C:\Program Files','C:\Program Files (x86)',$env:LOCALAPPDATA,$env:ProgramData -Recurse -Filter janet.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          $exe = Get-Item (Join-Path $env:LOCALAPPDATA 'Apps\Janet\bin\janet.exe') -ErrorAction SilentlyContinue
           if (-not $exe) { throw 'janet.exe not found after install' }
           Write-Host "janet found in: $($exe.DirectoryName)"
           $exe.DirectoryName | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
