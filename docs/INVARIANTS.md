@@ -79,7 +79,7 @@
 - K3（例外）`:toggle-float` は既定の束縛を持たない（xmonad の既定に toggle は無い）。
 - 未実装: X1 の拡張（フロートを加えた参照モデルとの差分）。F7 が同じ性質を `ws/remove` 経由で検査している。
 
-## Focus reassertion（ADR 0009。Draft、未実装）
+## Focus reassertion（ADR 0009。Draft、`test/property-test.janet` と `test/update-test.janet` で検査済み）
 `:pending-focus {:target :tag}` は `:goto` コマンドが `[:focus f]` を出すときに立つ Core の state。
 - Q1 `[:command :reassert-focus]` は、`:pending-focus` があり、`target` が可視ワークスペースの管理ウィンドウで、
   external が偽で、`:os-focus` がフロートでなく、`:os-focus ≠ target` のときだけ、モデルのフォーカスを `target` にして `[:focus target]` を出し、
