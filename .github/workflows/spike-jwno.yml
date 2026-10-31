@@ -26,6 +26,11 @@ jobs:
   build:
     runs-on: windows-2022
     steps:
+      - name: This repository (probe scripts)
+        uses: actions/checkout@v4
+        with:
+          path: xtile
+
       - name: Jwno source
         uses: actions/checkout@v4
         with:
@@ -111,13 +116,13 @@ jobs:
         if: always()
         continue-on-error: true
         shell: pwsh
-        run: ./spike/probe-os.ps1 -Out spike-out
+        run: ./xtile/spike/probe-os.ps1 -Out spike-out
 
       - name: Run Jwno with the probe config
         if: always()
         continue-on-error: true
         shell: pwsh
-        run: ./spike/run-jwno.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -Config "${{ github.workspace }}\spike\probe-config.janet" -Out spike-out
+        run: ./xtile/spike/run-jwno.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -Config "${{ github.workspace }}\spike\probe-config.janet" -Out spike-out
 
       - name: Upload logs
         if: always()
