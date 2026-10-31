@@ -78,3 +78,20 @@
 - E10（追記）`window-seen` は `window-opened` と同じ条件でのみ external を下ろせる。hidden 遷移は external を立てる。
 - K3（例外）`:toggle-float` は既定の束縛を持たない（xmonad の既定に toggle は無い）。
 - 未実装: X1 の拡張（フロートを加えた参照モデルとの差分）。F7 が同じ性質を `ws/remove` 経由で検査している。
+
+## Focus reassertion（ADR 0009。Draft、未実装）
+`:pending-focus {:target :tag}` は `:goto` コマンドが `[:focus f]` を出すときに立つ Core の state。
+- Q1 `[:command :reassert-focus]` は、`:pending-focus` があり、`target` が可視ワークスペースの管理ウィンドウで、
+  external が偽で、`:os-focus` がフロートでなく、`:os-focus ≠ target` のときだけ、モデルのフォーカスを `target` にして `[:focus target]` を出し、
+  `:pending-focus` を下ろす。それ以外（pending 無し・不正な引数・external 中・`:os-focus = target`）は何も出さない。
+- Q2 受理されたときの effects は `[:focus target]` だけ（`:goto :close :send :place` を出さない）。`:current`、
+  `:external-focus`、`:os-focus`、レイアウト、並び、`:floating` は変わらない。E2・E4・E10・E11・E12 を維持する
+  （`:os-focus` が `target` に一致するまで破壊的操作は止まる）。
+- Q3 `:pending-focus` は、`:reassert-focus` 以外の任意の `:command`、`target` への `focus-changed`、`target` の除去、
+  `:current` が `:tag` から外れること、非 silent な event による可視ワークスペースのフォーカス変更、
+  `:reassert-focus` の受理、のいずれかで下りる（silent な `focus-changed` では下りない）。したがって再発行は 1 エピソードに
+  つき最大 1 回で、下りた後の `:reassert-focus` は何もしない。
+- Q6 `:os-focus` がフロートのとき、`:reassert-focus` は何も出さない。引数付きの `:reassert-focus` は何もしない。
+- Q4 `:pending-focus` の `target` は常にスタック内の窓で、`:tag` は `:tags` のどれか（I1/I4 と並ぶ状態の整合）。
+- Q5（E2 の拡張）全ての `:focus` effect の対象は `:current` のワークスペースの窓（Core が暗黙の `:goto` を起こさない）。
+- K3（例外）`:reassert-focus` は束縛不可。keymap は `:internal` を含む未知の種類を拒否する（`case` の既定は拒否）。
