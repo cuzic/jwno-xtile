@@ -1,0 +1,9 @@
+[tools]
+janet = "1.42.1"
+# ninja/meson are only needed to *build* janet (mise's janet plugin compiles
+# from source). meson is installed with: uv tool install meson
+ninja = "latest"
+
+[tasks.test]
+description = "Run the core test suite"
+run = "janet test/run.janet"

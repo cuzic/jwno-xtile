@@ -1,0 +1,3 @@
+# Reference checkouts live OUTSIDE the repo (see ADR 0002). Belt and braces:
+ref/
+*.log
