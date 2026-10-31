@@ -51,3 +51,12 @@ StackSet 的なモデルで「各ウィンドウの矩形」を決める。橋�
 ## Confirmation
 
 - 実機チェックリスト（`docs/`）に上記 4 点を追加し、結果を追記して Accepted にする。
+
+## スパイク記録（GitHub ホスト型 Windows ランナー）
+
+### 2026-10-31 ビルド（`.github/workflows/spike-jwno-build.yml`、実行 41184729632）
+- `windows-2022` で Jwno 0.9.16（758edf3）をビルドできた。Janet 1.40.1（Jwno の固定版）、jpm 207ebf3、
+  jw32 master（8bd813a）、MSVC 17.14 / SDK 10.0.26100.0。所要約 1 分、`jwno.exe` 約 2 MB。
+- 最初の失敗は `JANET_SOURCE_PATH` 未設定（Janet ソースの checkout が必要）。
+- **まだ分かっていないこと**: Jwno を実際に起動できるか（ホスト型ランナーのデスクトップセッションで
+  UIA やウィンドウ列挙が動くか）。上の確認項目 1〜6 は未測定。次のスパイクで、起動とフック発火を測る。
