@@ -7,7 +7,7 @@
 
 (defn rec [what & xs]
   (def fg (try (GetForegroundWindow) ([_] :err)))
-  (file/write out (string/format "%.3f %s fg=%q %s\n" (os/clock :monotonic) what fg
+  (file/write out (string/format "%.3f %s fg=%q %s\n" (os/clock :realtime) what fg
                                  (string/join (map |(string/format "%q" $) xs) " ")))
   (file/flush out))
 
