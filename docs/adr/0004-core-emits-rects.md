@@ -64,5 +64,9 @@ StackSet 的なモデルで「各ウィンドウの矩形」を決める。橋�
 - 追加シナリオ（run 2）: 手動で動かした窓は `retile` で枠に戻される（確認項目 2〜3 の一部）。Jwno の
   `transform` は DWM の枠を補正して配置する。フォーカス通知は欠落・遅延し、新規ウィンドウでは
   `window-created` との順序が一定でない（項目 6）。
-- **まだ未測定**: 項目 1（管理対象外ウィンドウの通知元）、項目 5（Jwno 自身の `:set-focus`/`:activate` との
-  競合）、`window-moved` の戻し、`transform` と自前 `SetWindowPos` の比較。
+- **項目 5（競合）を測定した**（`docs/spike/2026-10-31-hosted-windows.md`）。Jwno は、レイアウトのある
+  デスクトップへ切り替わるたびに自分で `set-focus` を呼び、切替から約 100ms 以内の Core 相当の `:focus` に勝つ。
+  それ以降の `:focus` は通る。別デスクトップの窓への `SetForegroundWindow` は暗黙のデスクトップ切替になる。
+  → 緩和策は ADR 0009 の未決事項に追記した。
+- **まだ未測定**: 項目 1（管理対象外ウィンドウの通知元）、`window-moved` の戻し、`transform` と自前
+  `SetWindowPos` の比較、緩和策の効果。

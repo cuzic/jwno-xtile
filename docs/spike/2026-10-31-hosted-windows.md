@@ -37,7 +37,27 @@
 | 前面の窓を閉じる | 同一ティックで `window-removed(閉じた窓) → focus-changed(次の窓) → window-activated` |
 | 起動時 | Jwno はランナー自身のコンソール（`hosted-compute-agent`）も管理対象にした。`get-all-desktops` は仮想デスクトップ未作成だと `@[]` を返すが、窓の `desktop-info` は `{:id ... :name :default}` が付く |
 
+## 確認項目 5: Jwno 自身のフォーカス操作と Core の `:focus` の競合（run 3、デスクトップの往復）
+`spike/probe-config.janet` が、ウィンドウマネージャの `:set-focus-to-hwnd` / `:set-focus-to-desktop` を
+インスタンス上でラップし、Jwno が**自分で**フォーカスを動かした瞬間を記録した。
+
+| 場面 | 観測 |
+|---|---|
+| 外部のフォーカス移動・`retile` | Jwno は自分ではフォーカスを動かさない（`jwno-set-focus-*` なし）。`window-activated` のみ |
+| 新しく作った（Jwno のレイアウトが無い）デスクトップへ切替 | `virtual-desktop-changed`（layout=nil）のみ。Jwno は何も focus しない |
+| Jwno のレイアウトがあるデスクトップへ**戻る** | `virtual-desktop-changed`（切替から数 ms 以内）→ **約 15〜30ms 後に Jwno が `set-focus-to-hwnd`**（自分が覚えている現在のウィンドウ B2）→ `focus-changed`。この時 OS 自身が選んでいた前面は **C2** で、Jwno の選択（B2）と違った |
+| 戻った直後（約 100ms）に Core 相当の `SetForegroundWindow(C2)` | **負けた**。`SetForegroundWindow` は `True` を返したが、100ms 後も 3 秒後も前面は Jwno の選んだ B2 のまま |
+| 戻った約 170ms 後 / 約 600ms 後に同じ操作 | **勝った**（前面が C2）。Jwno の `set-focus` はそれより先に済んでいた |
+| 別デスクトップのウィンドウへ `SetForegroundWindow` | **Windows が自動でそのデスクトップへ切り替えた**（約 25ms 後に `virtual-desktop-changed`）。その後 Jwno が `set-focus-to-hwnd` を呼んだ |
+| 別デスクトップから、Jwno が覚えているのと**別の**窓（C2）へ `SetForegroundWindow` | `focus-changed(C2)` が `virtual-desktop-changed` より先に届き、Jwno の `set-focus` の対象も C2 になった。**競合しなかった**（OS のフォーカスが先に着地し Jwno の「現在の窓」が C2 に更新されたため） |
+
 ## 解釈（推測を含む）
+- Jwno は、レイアウトのあるデスクトップへ切り替わるたびに自分でフォーカスを動かす
+  （`wm-desktop-name-changed` → `:set-focus`、`win.janet` で確認）。対象は Jwno が覚えている現在のウィンドウで、
+  OS が選んだ前面と違うことがある。Core の `:goto` の直後の `:focus` は、**切替から約 100ms 以内だと Jwno に上書きされる**。
+- 逆に、フォーカスの観測（`focus-changed`）が `virtual-desktop-changed` より先に届けば Jwno は Core と同じ窓を選ぶ。
+  勝敗は到着順に依存する。これは ADR 0005 R1（`focus-changed` と `desktop-changed` の可換性）が必要な理由そのもの。
+- `:focus` を別デスクトップの窓へ出すと、それが暗黙の `:goto` になる（ADR 0005 §4 の effect 順序の前提）。
 - `:window-removed` が出ないのは、Jwno が `wm-focus-changed` の中で `clean-up-hwnds` を呼ぶ構造
   （`win.janet` で確認）のためで、フォーカス変化が無いと掃除されない、と見るのが自然。
   → ADR 0005 の `windows-observed` の定期／契機呼び出しが必要という前提を裏付ける。
@@ -54,4 +74,6 @@
 - **Core が出した `:place` を Jwno の `window :transform` 経由で適用するか、自前の `SetWindowPos` か**
   （`transform` は DWM の枠を補正する。ADR 0004 案 1/3 の判断材料）。
 - 管理対象外ウィンドウの生成・消滅の通知源（ADR 0004 確認項目 1）。今回の窓はすべて Jwno が管理した。
-- Jwno 自身の `:set-focus` / `:activate` と Core の `:focus` の競合（確認項目 5）。
+- 確認項目 5 の**緩和策**の効果: Jwno の `:set-focus` を Shell が無効化/ラップする案（このスパイクで使った
+  ラップと同じ手口）、`:goto` の後に `:focus` を遅らせる案（約 250ms 以上）、`:focus` 後の遅延再観測で不一致なら
+  再度 `:focus` を出す案。どれも未検証。
