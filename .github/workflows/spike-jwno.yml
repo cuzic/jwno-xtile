@@ -1,7 +1,7 @@
-# Spike (ADR 0004/0006/0009): can Jwno be built on a hosted Windows runner?
+# Spike (ADR 0004/0006/0009): build Jwno on a hosted Windows runner, then probe the OS and run Jwno.
 # Mirrors Jwno's own release workflow (MIT, agent-kilo/jwno). Manual trigger only.
-# Nothing built here is uploaded or distributed.
-name: spike-jwno-build
+# Only logs are uploaded (never the built exe).
+name: spike-jwno
 on:
   workflow_dispatch:
 
@@ -105,3 +105,25 @@ jobs:
 
       - name: Built files
         run: dir ${{ env.JWNO_DIR }}\build
+
+      # ---- probes: each continues on error; a failure is data ----
+      - name: Probe the OS (session, focus lock, DWM frame, virtual desktops)
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: ./spike/probe-os.ps1 -Out spike-out
+
+      - name: Run Jwno with the probe config
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: ./spike/run-jwno.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -Config "${{ github.workspace }}\spike\probe-config.janet" -Out spike-out
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-logs
+          path: spike-out
+          retention-days: 7
+          if-no-files-found: warn
