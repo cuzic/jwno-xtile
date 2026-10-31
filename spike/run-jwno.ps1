@@ -11,7 +11,16 @@ $rects = Join-Path $Out "rects.txt"
 Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+[ComImport, Guid("A5CD92FF-29BE-454C-8D04-D82879FB3F1B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IVdm { [PreserveSig] int IsWindowOnCurrentVirtualDesktop(IntPtr h, out bool b); }
 public static class F {
+  public static string OnCurrent(IntPtr h) {
+    try {
+      var v = (IVdm)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A")));
+      bool on; int hr = v.IsWindowOnCurrentVirtualDesktop(h, out on);
+      return "hr=" + hr + " on_current=" + on;
+    } catch (Exception e) { return "ERROR " + e.Message; }
+  }
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -40,6 +49,15 @@ function Focus($h, $label, [bool]$alt, [int]$settle = 400) {
   Start-Sleep -Milliseconds $settle
   $fg = [F]::GetForegroundWindow()
   Act ("focus {0} alt={1} returned={2} fg_is_target={3} fg={4}" -f $label, $alt, $ok, ($fg -eq $h), (Ptr $fg))
+}
+function Chord([byte]$vk, $label) {
+  # Win+Ctrl+<key>: D = new desktop, Left/Right = switch
+  foreach ($k in 0x5B, 0x11, $vk) { [F]::keybd_event($k, 0, 0, [UIntPtr]::Zero) }
+  foreach ($k in $vk, 0x11, 0x5B) { [F]::keybd_event($k, 0, 2, [UIntPtr]::Zero) }
+  Act "chord $label"
+}
+function Where($label, $h) {
+  Act ("where {0}: fg={1} target_on_current_desktop=[{2}]" -f $label, (Ptr ([F]::GetForegroundWindow())), [F]::OnCurrent($h))
 }
 function Launch($label) {
   $p = Start-Process notepad -PassThru; Start-Sleep 3; $p.Refresh()
@@ -88,6 +106,39 @@ Act "close C gracefully while it is the foreground window"
 [void]$C.CloseMainWindow(); Start-Sleep 5
 Act ("after close: fg={0} (A is {1})" -f (Ptr ([F]::GetForegroundWindow())), (Ptr $hA))
 
+# ---- ADR 0004 item 5: Jwno's own focus moves vs ours ----
+Act "== S8 relaunch two windows =="
+$B2 = Launch "B2"; $C2 = Launch "C2"
+$hB2 = $B2.MainWindowHandle; $hC2 = $C2.MainWindowHandle
+Focus $hB2 "B2" $true 1000
+
+Act "== S9 desktop round trip; focus was B2 =="
+Chord 0x44 "Win+Ctrl+D (new desktop, switch to it)"; Start-Sleep 3
+Where "on new desktop" $hB2
+Chord 0x25 "Win+Ctrl+Left (back to desktop 1)"; Start-Sleep 3
+Where "back on desktop 1 (was B2 focused before?)" $hB2
+
+foreach ($delay in 0, 150, 600) {
+  Act ("== S10 race: switch away/back, our :focus(C2) {0}ms after the switch-back ==" -f $delay)
+  Focus $hB2 "B2(reset)" $true 800
+  Chord 0x27 "Win+Ctrl+Right (to desktop 2)"; Start-Sleep 2
+  Chord 0x25 "Win+Ctrl+Left (to desktop 1)"
+  if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
+  Focus $hC2 ("C2(our focus +{0}ms)" -f $delay) $true 100
+  Start-Sleep 3
+  Where ("final after +{0}ms race (we wanted C2)" -f $delay) $hC2
+}
+
+Act "== S11 our :focus on a window of ANOTHER desktop =="
+Focus $hB2 "B2(reset)" $true 800
+Chord 0x27 "Win+Ctrl+Right (to desktop 2)"; Start-Sleep 2
+Where "on desktop 2, before" $hB2
+Focus $hB2 "B2 from desktop 2 (alt)" $true 1500
+Where "on desktop 2, after focusing B2 (desktop 1 window)" $hB2
+Chord 0x25 "Win+Ctrl+Left (ensure desktop 1)"; Start-Sleep 2
+Where "end" $hB2
+
+foreach ($p in @($B2, $C2)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
 Act ("jwno alive at end={0}" -f (-not $j.HasExited))
 if (-not $j.HasExited) { Stop-Process -Id $j.Id -Force }
 foreach ($p in @($A)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }

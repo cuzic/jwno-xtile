@@ -39,6 +39,16 @@
 (:add-hook hook-man :frame-activated
    (fn [fr] (rec :frame-activated)))
 
+# Instrument Jwno's OWN focus moves (ADR 0004 item 5): shadow the window manager's methods on the
+# instance so every call Jwno makes itself is logged, then delegate to the original.
+(let [wm (in jwno/context :window-manager)]
+  (each name [:set-focus-to-hwnd :set-focus-to-desktop]
+    (def orig (in wm name))
+    (put wm name
+         (fn [self & args]
+           (rec (keyword "jwno-" name) ;args)
+           (orig self ;args)))))
+
 # What does Jwno think the desktops are?
 (ev/spawn
   (try
