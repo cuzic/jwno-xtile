@@ -39,3 +39,11 @@ xmonad のワークスペースはモニタごとに表示される（Xinerama�
 ## Confirmation
 
 - 実機でのスパイク結果を追記し、選択肢ごとの落とし穴を記録して Accepted にする。
+
+## スパイク記録（2026-10-31、ホスト型 Windows Server 2022。実機ではない）
+詳細は `docs/spike/2026-10-31-hosted-windows.md`。
+- 公開 COM `IVirtualDesktopManager` の `GetWindowDesktopId` / `IsWindowOnCurrentVirtualDesktop` は動いた。
+- `Win+Ctrl+D` で仮想デスクトップを作成・切替でき、Jwno は `get-all-desktops` で 2 件を列挙した
+  （レジストリ `VirtualDesktops` を読む実装）。窓には `desktop-info {:id :name}` が付く。
+- **未確認**: 他プロセスのウィンドウを動かせるか（`MoveWindowToDesktop`）、`VirtualDesktopAccessor.dll` の
+  動作、Windows 10/11 でのビルド依存。案 1 か 2 かの決定にはまだ足りない。
