@@ -8,6 +8,7 @@
 (import ./classify-test)
 (import ./keymap-test)
 (import ./shell-test)
+(import ./adapter-test)
 (import ./purity-test)
 (import ./property-test)
 (t/run-all)
