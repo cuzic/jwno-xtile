@@ -50,7 +50,9 @@
       (case want
         :none (if (empty? args) nil "takes no argument")
         :tag (if (and (= 1 (length args)) (index-of arg tags)) nil (string "needs one of the workspace tags, got " arg))
-        :layout (if (and (= 1 (length args)) (index-of arg layout/layouts)) nil (string "needs a layout, got " arg))))))
+        :layout (if (and (= 1 (length args)) (index-of arg layout/layouts)) nil (string "needs a layout, got " arg))
+        :internal (string name " is issued by the shell and cannot be bound")
+        (string "unsupported argument kind " want)))))
 
 (defn build
   "Validate bindings. -> {:keys {canonical-key event} :errors [string ...]}.

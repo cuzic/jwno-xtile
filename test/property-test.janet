@@ -20,6 +20,7 @@
    [:command :inc-master] [:command :dec-master]
    [:command :expand] [:command :shrink] [:command :next-layout]
    [:command :close] [:command :refresh] [:command :toggle-float]
+   [:command :reassert-focus] [:command :reassert-focus 1 2] [:command :reassert-focus :w1]
    [:command :set-layout :tall] [:command :set-layout :wide]
    [:command :set-layout :full] [:command :set-layout :bogus]
    [:command :bogus]])
@@ -141,6 +142,12 @@
       (errorf "I3 layout params out of range after %q" event)))
   (unless (index-of (s :current) (s :tags))
     (errorf "I4 bad current after %q" event))
+  # Q4: a pending :goto focus always names a window in the stack, on the visible workspace's tag
+  (when-let [p (s :pending-focus)]
+    (unless (index-of (p :target) all)
+      (errorf "Q4 pending target %q is not in the stack after %q" (p :target) event))
+    (unless (= (p :tag) (s :current))
+      (errorf "Q4 pending tag %q is not current after %q" (p :tag) event)))
   (def w (st/current-ws s))
   (def p (st/placements s))
   (def tiled (st/tiled-ids s w))
@@ -195,8 +202,50 @@
           (when (find |(= (first $) :focus) (r :effects))
             (errorf "F8 :focus emitted for a hidden OS-focused window: %q" event)))))))
 
+(defn check-reassert [old r event]
+  (def s (r :state))
+  (def name (get event 1))
+  (when (= (get event 0) :command)
+    # Q3: any command other than :reassert-focus / :goto leaves nothing pending
+    (when (and (not (index-of name [:reassert-focus :goto])) (s :pending-focus))
+      (errorf "Q3 pending survived a new command after %q" event))
+    (when (and (= name :goto) (s :pending-focus))
+      (unless (= ((s :pending-focus) :target) (st/focused s))
+        (errorf "Q3 goto left a pending focus on a different window: %q" event)))
+    (when (= name :reassert-focus)
+      (def p (old :pending-focus))
+      (def t (and p (p :target)))
+      (def os (old :os-focus))
+      (def want?
+        (and (= 2 (length event)) t os
+             (= (st/locate old t) (old :current))
+             (not (old :external-focus))
+             (not (st/floating? old os))
+             (not= os t)))
+      (if want?
+        (do
+          # Q1/Q2: exactly one :focus on the target, consumed, nothing else moves
+          (unless (deep= (tuple ;(r :effects)) [[:focus t]])
+            (errorf "Q1 reassert should emit only [:focus %q], got %q" t (r :effects)))
+          (unless (nil? (s :pending-focus))
+            (errorf "Q2 reassert did not consume the pending focus"))
+          (each k [:current :external-focus :os-focus :floating]
+            (unless (deep= (old k) (s k))
+              (errorf "Q2 reassert changed %q" k)))
+          (unless (= (st/focused s) t)
+            (errorf "Q2 reassert did not move the model focus to the target")))
+        (unless (and (deep= s old) (empty? (r :effects)))
+          (errorf "Q1/Q6 reassert acted when it must not: %q -> %q" event (r :effects)))))))
+
 (defn check-effects [old r event]
   (def s (r :state))
+  (check-reassert old r event)
+  # Q5 (E2 extension): a :focus always targets a window of the CURRENT workspace,
+  # so the core never causes an implicit desktop switch
+  (each e (r :effects)
+    (when (= (first e) :focus)
+      (unless (index-of (e 1) ((st/current-ws s) :ids))
+        (errorf "Q5 :focus %q is not on the current workspace after %q" (e 1) event))))
   (def p (st/placements s))
   (def fx (r :effects))
   (def kind (get event 0))

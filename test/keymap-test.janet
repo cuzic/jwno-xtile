@@ -51,8 +51,14 @@
   (def km (k/build (k/default-bindings "Alt" tags) tags))
   (def bound (distinct (map |($ 1) (values (km :keys)))))
   (each name (keys u/command-args)
-    (unless (index-of name [:set-layout :shift-master :toggle-float])
+    (unless (or (index-of name [:set-layout :shift-master :toggle-float])
+                (= :internal (u/command-args name)))
       (is (index-of name bound)))))
+
+(deftest "internal commands cannot be bound"
+  (def km (k/build [["Alt + X" [:command :reassert-focus]]] tags))
+  (is= {} (km :keys))
+  (is= 1 (length (km :errors))))
 
 (deftest "every default binding drives update without throwing"
   (def km (k/build (k/default-bindings "Alt" tags) tags))

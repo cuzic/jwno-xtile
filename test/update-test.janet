@@ -284,3 +284,77 @@
 
 (deftest "S9: tags must be strings"
   (is (not (first (protect (st/make screen [:one :two]))))))
+
+# ---- ADR 0009: :pending-focus / :reassert-focus ------------------------
+
+(defn after-goto
+  "Windows a on 1; b, c on 2 (c focused); the user went to 2. -> state"
+  []
+  (def [s _] (run (fresh)
+                  [:window-opened :a]
+                  [:window-opened :b "2"] [:window-opened :c "2"]
+                  [:focus-changed :a]
+                  [:command :goto "2"]))
+  s)
+
+(deftest "goto remembers what it wanted focused"
+  (def s (after-goto))
+  (is= {:target :c :tag "2"} (s :pending-focus))
+  (def [_ fx] (run (fresh) [:window-opened :a] [:window-opened :c "2"] [:focus-changed :a]
+                   [:command :goto "2"]))
+  (is= [:goto "2"] (first fx))
+  (is= [:focus :c] (last fx)))
+
+(deftest "goto onto an empty workspace remembers nothing"
+  (def [s _] (run (fresh) [:window-opened :a] [:focus-changed :a] [:command :goto "3"]))
+  (is (nil? (s :pending-focus))))
+
+(deftest "reassert: Jwno overrode us with another ordinary window -> ask for ours again, once"
+  (def [s1 _] (run (after-goto) [:focus-changed :b]))   # the override, observed
+  (is= :b (s1 :os-focus))
+  (def r (u/update s1 [:command :reassert-focus]))
+  (is= [[:focus :c]] (tuple ;(r :effects)))
+  (is= :c (st/focused (r :state)))
+  (is= :b ((r :state) :os-focus))               # not confirmed yet: close stays disabled
+  (is (nil? ((r :state) :pending-focus)))
+  (is= [] (tuple ;((u/update (r :state) [:command :reassert-focus]) :effects)))   # at most once
+  (is= [] (tuple ;((u/update (r :state) [:command :close]) :effects))))
+
+(deftest "reassert does nothing when the OS is already on the target, or nothing is pending"
+  (def s0 (after-goto))
+  (is= [] (tuple ;((u/update s0 [:command :reassert-focus]) :effects)))     # os-focus unknown / external
+  (def [s1 _] (run s0 [:focus-changed :c]))
+  (is (nil? (s1 :pending-focus)))                                           # success consumed it
+  (is= [] (tuple ;((u/update s1 [:command :reassert-focus]) :effects)))
+  (is= [] (tuple ;((u/update (fresh) [:command :reassert-focus]) :effects))))
+
+(deftest "reassert never takes focus from an unmanaged window or a floating dialog"
+  (def s0 (after-goto))
+  (def [unmanaged _] (run s0 [:focus-changed :stranger]))
+  (is= [] (tuple ;((u/update unmanaged [:command :reassert-focus]) :effects)))
+  (is= unmanaged ((u/update unmanaged [:command :reassert-focus]) :state))
+  (def with-rules (st/make screen ["1" "2" "3"] [{:match {:class "#32770"} :action :float}]))
+  (def [s1 _] (run with-rules
+                   [:window-opened :a]
+                   [:window-seen :dlg {:class "#32770" :visible? true} "2"]
+                   [:window-opened :c "2"]
+                   [:focus-changed :a] [:command :goto "2"]
+                   [:focus-changed :dlg]))
+  (is (st/floating? s1 :dlg))
+  (is (s1 :pending-focus))
+  (is= [] (tuple ;((u/update s1 [:command :reassert-focus]) :effects))))
+
+(deftest "reassert ignores arguments"
+  (def [s1 _] (run (after-goto) [:focus-changed :b]))
+  (is= [] (tuple ;((u/update s1 [:command :reassert-focus :c]) :effects))))
+
+(deftest "pending is dropped by a new intent, a manual switch, the target going away, or a new window"
+  (def s0 (after-goto))
+  (is (nil? (((u/update s0 [:command :focus-next]) :state) :pending-focus)))
+  (is (nil? (((u/update s0 [:command :close]) :state) :pending-focus)))
+  (is (nil? (((u/update s0 [:desktop-changed "3"]) :state) :pending-focus)))
+  (is (nil? (((u/update s0 [:window-closed :c]) :state) :pending-focus)))
+  (is (nil? (((u/update s0 [:window-opened :n]) :state) :pending-focus)))   # core gave n the focus
+  # but observing the override does not: that is what we repair
+  (is (((u/update s0 [:focus-changed :b]) :state) :pending-focus))
+  (is (((u/update s0 [:desktop-changed "2"]) :state) :pending-focus)))   # our own goto, confirmed by the OS

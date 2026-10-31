@@ -264,6 +264,23 @@
     (set-floating s id (not (st/floating? s id)))
     s))
 
+(defn- reassert-focus
+  "ADR 0009: one delayed retry of a :goto's focus. Only when the OS reports a
+  different, ordinary managed window; never from an unmanaged window or a
+  floating dialog; at most once (the pending note is consumed)."
+  [s args]
+  (def p (s :pending-focus))
+  (def t (and p (p :target)))
+  (def os (s :os-focus))
+  (if (and (empty? args) t os
+           (= (st/locate s t) (s :current))
+           (not (external? s))
+           (not (st/floating? s os))
+           (not= os t))
+    [(-> s (d/without :pending-focus) (st/update-current |(ws/focus-id $ t)))
+     [[:focus t]]]
+    [s []]))
+
 (def- focus-moving? {:focus-next true :focus-prev true :focus-master true})
 
 (def command-args
@@ -272,7 +289,8 @@
   (struct
     ;(mapcat |[$ :none]
               [;(keys ws-commands) ;(keys reorder-commands) :close :refresh])
-    :goto :tag :send :tag :set-layout :layout :toggle-float :none))
+    :goto :tag :send :tag :set-layout :layout :toggle-float :none
+    :reassert-focus :internal))   # :internal = issued by the shell, never bound to a key
 
 (defn- goto-tag [s tag]
   (-> s (d/assoc {:current tag :external-focus true}) (d/without :os-focus)))
@@ -307,11 +325,17 @@
     (= name :goto)
     (let [tag (get args 0)]
       (if (and (valid-tag? s tag) (not= tag (s :current)))
-        (let [s2 (goto-tag s tag)]
-          [s2 [[:goto tag] ;(explicit-focus s2)]])
+        (let [s2 (goto-tag s tag)
+              f (st/focused s2)
+              # remember what we want focused: a later :reassert-focus may
+              # restore it if the OS/Jwno overrides us (ADR 0009 R-10)
+              s3 (if f (d/assoc s2 {:pending-focus {:target f :tag tag}}) s2)]
+          [s3 [[:goto tag] ;(explicit-focus s2)]])
         [s []]))
 
     (= name :toggle-float) [(toggle-float s) []]
+
+    (= name :reassert-focus) (reassert-focus s args)
 
     (= name :send) (send-focused s (get args 0))
 
@@ -359,9 +383,30 @@
 
 (defn- tail [xs] (if (empty? xs) [] (slice xs 1)))
 
-(defn- update* [s event]
+(defn- settle-pending
+  "Drop the pending :goto focus when it is stale (ADR 0009). A silent
+  observation of a different window does NOT drop it: that is exactly the
+  override we want to repair."
+  [old s kind args]
+  (def p (s :pending-focus))
+  (cond
+    (nil? p) s
+    (or (nil? (st/locate s (p :target)))
+        (not= (s :current) (p :tag))
+        (and (= kind :focus-changed) (= (get args 0) (p :target)))
+        # a decision the core itself just took (new window, close) wins
+        (and (index-of kind [:window-opened :window-seen :window-closed])
+             (not= (st/focused old) (st/focused s))))
+    (d/without s :pending-focus)
+    s))
+
+(defn- update* [s0 event]
   (def kind (get event 0))
   (def args (tail event))
+  # any command other than :reassert-focus is a new intent: forget the pending one
+  (def s (if (and (= kind :command) (not= (get args 0) :reassert-focus))
+           (d/without s0 :pending-focus)
+           s0))
   (cond
     (and (= kind :command) (= (get args 0) :refresh))
     (let [s2 (d/without s :misfit)
@@ -389,8 +434,9 @@
             :command (let [[s* fx] (command s (get args 0) (tail args))]
                        [s* fx false])
             [s [] false])]
-      {:state s2
-       :effects (order-effects [;explicit ;(derive-effects s s2 silent?)])})))
+      (let [s3 (settle-pending s s2 kind args)]
+        {:state s3
+         :effects (order-effects [;explicit ;(derive-effects s s3 silent?)])}))))
 
 (defn update [s event]
   (if (indexed? event) (update* s event) {:state s :effects []}))
