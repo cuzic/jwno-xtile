@@ -1,0 +1,497 @@
+# Random event sequences; invariants must hold after every step.
+# The invariant list is docs/INVARIANTS.md -- keep the two in sync.
+(use ./t)
+(import ../src/core/geometry :as g)
+(import ../src/core/state :as st)
+(import ../src/core/update :as u)
+(import ../src/core/workspace :as ws)
+(import ../src/core/classify :as cl)
+(import ../src/core/layout)
+
+(def tags ["1" "2" "3"])
+(def screens
+  [(g/rect 0 0 1920 1080) (g/rect -1920 0 1920 1080) (g/rect 100 50 1280 720)
+   (g/rect 0 -1080 2560 1440)])
+
+(def commands
+  [[:command :focus-next] [:command :focus-prev] [:command :focus-master]
+   [:command :swap-next] [:command :swap-prev] [:command :swap-master]
+   [:command :shift-master]
+   [:command :inc-master] [:command :dec-master]
+   [:command :expand] [:command :shrink] [:command :next-layout]
+   [:command :close] [:command :refresh] [:command :toggle-float]
+   [:command :set-layout :tall] [:command :set-layout :wide]
+   [:command :set-layout :full] [:command :set-layout :bogus]
+   [:command :bogus]])
+
+(def malformed
+  [[] [:window-opened] [:window-closed] [:focus-changed] [:command]
+   [:screen-changed] [:window-moved] [:nope 1 2 3] [:command :goto]
+   [:command :send] [:window-opened nil] [:desktop-changed nil]
+   # ill-typed, mutable, or degenerate values
+   [:screen-changed 5] [:screen-changed {:x 0}]
+   [:screen-changed {:x 0 :y 0 :w -5 :h 10}] [:screen-changed {:x 0 :y 0 :w 0 :h 10}]
+   [:screen-changed {:x 0.5 :y 0 :w 10 :h 10}]
+   [:window-opened @[1]] [:window-opened :z @"1"] [:window-opened @{:a 1}]
+   [:window-closed @[1]] [:focus-changed @[1]] [:desktop-changed @"1"]
+   [:window-moved :w1 5] [:window-moved @[1] {:x 0 :y 0 :w 1 :h 1}]
+   [:windows-observed 5] [:windows-observed [5 [:a]]] [:windows-observed [[@[1] "1"]]]
+   [:window-seen :w1 5] [:window-seen :w1] [:window-seen :w1 nil] [:window-seen @[1] {}]
+   [:window-seen :w1 "x" "1"] [:windows-observed [[:w1 "1" 5] [:w2 nil nil]]]
+   [:command :goto @"1"] [:command @[1]] [:command :set-layout @[1]]])
+
+(defn pick [rng xs] (xs (math/rng-int rng (length xs))))
+
+(def rule-pool
+  [{:match {:exe "a.exe"} :action :float}
+   {:match {:exe "b.exe"} :action :ignore}
+   {:match {:class "#32770"} :action :tile}
+   {:match {:exe "c.exe"} :action :tile}])
+
+(defn random-rules [rng]
+  (tuple ;(seq [_ :range [0 (math/rng-int rng 4)]] (pick rng rule-pool))))
+
+(defn new-state [rng]
+  (st/make (first screens) tags (random-rules rng)))
+
+(defn random-facts
+  "Mostly valid facts; sometimes not even a dictionary."
+  [rng]
+  (if (zero? (math/rng-int rng 8))
+    (pick rng [nil 5 "x" [1]])
+    (merge {:class "K" :visible? true
+            :exe (pick rng ["C:\\x\\a.exe" "C:\\x\\b.exe" "C:\\x\\c.exe"])}
+           (pick rng [{} {} {} {:dialog? true} {:owned? true} {:class "#32770"}
+                      {:minimized? true} {:fullscreen? true} {:visible? false}
+                      {:tool-window? true}]))))
+
+(defn random-event [rng]
+  (def id (keyword "w" (math/rng-int rng 12)))
+  (case (math/rng-int rng 21)
+    0 [:window-opened id]
+    1 [:window-opened id (pick rng tags)]
+    2 [:window-opened id "bogus"]
+    3 [:window-closed id]
+    4 [:focus-changed id]
+    5 [:focus-changed nil]
+    6 [:desktop-changed (pick rng [;tags "bogus"])]
+    7 [:screen-changed (pick rng screens)]
+    8 [:window-moved id (g/rect (math/rng-int rng 50) 0 100 100)]
+    9 [:command :goto (pick rng [;tags "bogus"])]
+    10 [:command :send (pick rng [;tags "bogus"])]
+    11 (pick rng malformed)
+    12 [:windows-observed
+        (tuple ;(seq [_ :range [0 (math/rng-int rng 6)]]
+                  [(keyword "w" (math/rng-int rng 12))
+                   (pick rng [nil ;tags])]))]
+    13 [:window-opened (math/rng-int rng 5)]
+    14 [:window-seen id (random-facts rng)]
+    15 [:window-seen id (random-facts rng) (pick rng tags)]
+    16 [:command :toggle-float]
+    17 [:windows-observed
+        (tuple ;(seq [_ :range [0 (math/rng-int rng 6)]]
+                  [(keyword "w" (math/rng-int rng 12))
+                   (pick rng [nil ;tags])
+                   (random-facts rng)]))]
+    (pick rng commands)))
+
+(def silent-kinds
+  {:focus-changed true :desktop-changed true :windows-observed true})
+(def idempotent-kinds
+  {:window-opened true :window-seen true :window-closed true :focus-changed true
+   :desktop-changed true :screen-changed true :windows-observed true})
+
+# kinds that are not OS focus observations: they must never clear
+# :external-focus (E10)
+(def non-focus-observation
+  {:window-closed true :screen-changed true
+   :window-moved true :command true})
+# window-opened may clear external focus only for the id last observed as OS
+# focus (Jwno reports focus before :window-opened) -- checked in check-external
+
+(defn immutable? [x]
+  (case (type x)
+    :table false :array false :buffer false :fiber false :function false
+    :tuple (all immutable? x)
+    :struct (all |(and (immutable? (0 $)) (immutable? (1 $))) (pairs x))
+    true))
+
+(defn check-invariants [s event]
+  (unless (immutable? s)
+    (errorf "I0 state contains mutable data after %q" event))
+  (def screen (s :screen))
+  (def all (mapcat |(((s :workspaces) $) :ids) (s :tags)))
+  (each id (keys (s :floating))
+    (unless (index-of id all)
+      (errorf "F1 floating id %q is not in the stack after %q" id event)))
+  (each id (keys (get s :misfit {}))
+    (unless (index-of id all)
+      (errorf "F1 misfit id %q is not in the stack after %q" id event)))
+  (unless (= (length all) (length (distinct all)))
+    (errorf "I1 duplicate window after %q: %q" event all))
+  (each tag (s :tags)
+    (def w ((s :workspaces) tag))
+    (unless (or (nil? (w :focus)) (ws/has? w (w :focus)))
+      (errorf "I2 dangling focus after %q" event))
+    (when (and (empty? (w :ids)) (w :focus))
+      (errorf "I2 focus on empty workspace after %q" event))
+    (when (and (not (empty? (w :ids))) (nil? (w :focus)))
+      (errorf "I2 no focus on non-empty workspace after %q" event))
+    (unless (and (>= (w :nmaster) 0) (<= 0.1 (w :ratio) 0.9))
+      (errorf "I3 layout params out of range after %q" event)))
+  (unless (index-of (s :current) (s :tags))
+    (errorf "I4 bad current after %q" event))
+  (def w (st/current-ws s))
+  (def p (st/placements s))
+  (def tiled (st/tiled-ids s w))
+  (unless (= (length p) (length tiled))
+    (errorf "I5 placement count mismatch after %q" event))
+  # F7: the layout sees the stack minus the floats, nothing else
+  (def stripped (reduce |(ws/remove $0 $1) w (filter |(st/floating? s $) (w :ids))))
+  (unless (deep= (table/to-struct (from-pairs (layout/arrange (w :layout) w screen (stripped :ids)))) p)
+    (errorf "F7 placements differ from the float-free workspace after %q" event))
+  (def rs (map |(p $) tiled))
+  (each r rs
+    (unless (and (>= (r :x) (screen :x)) (>= (r :y) (screen :y))
+                 (<= (+ (r :x) (r :w)) (+ (screen :x) (screen :w)))
+                 (<= (+ (r :y) (r :h)) (+ (screen :y) (screen :h)))
+                 (pos? (r :w)) (pos? (r :h)))
+      (errorf "I6 rect out of bounds after %q: %q in %q" event r screen)))
+  (unless (= (w :layout) :full)
+    (unless (empty? rs)
+      (unless (= (sum (map g/area rs)) (g/area screen))
+        (errorf "I7 tiling does not cover screen after %q" event)))
+    (for i 0 (length rs)
+      (for j (+ i 1) (length rs)
+        (when (g/overlap? (rs i) (rs j))
+          (errorf "I7 overlap after %q" event))))))
+
+(defn- stack-ids [s] (mapcat |(((s :workspaces) $) :ids) (s :tags)))
+
+(defn check-window-seen [old r event]
+  (def s (r :state))
+  (def kind (get event 0))
+  (when (= kind :window-seen)
+    (def [_ id facts] event)
+    (def known (and (or (number? id) (keyword? id) (string? id)) (index-of id (stack-ids old))))
+    (cond
+      # F11: facts that are not a dictionary change nothing
+      (not (dictionary? facts))
+      (unless (and (deep= s old) (empty? (r :effects)))
+        (errorf "F11 invalid facts changed something: %q" event))
+      # F4: a known window that is not hidden is left alone
+      (and known (not (cl/hidden? facts)))
+      (unless (and (deep= s old) (empty? (r :effects)))
+        (errorf "F4 window-seen on a visible known window changed something: %q" event))
+      # F5 / F8: hidden removes it everywhere; if the OS focus was on it we
+      # keep the observation, mark focus external and do not echo a :focus
+      (and known (cl/hidden? facts))
+      (do
+        (when (or (index-of id (stack-ids s)) (st/floating? s id) (get-in s [:misfit id]))
+          (errorf "F5 hidden window left traces: %q" event))
+        (when (= id (old :os-focus))
+          (unless (and (s :external-focus) (= id (s :os-focus)))
+            (errorf "F8 hidden OS-focused window did not make focus external: %q" event))
+          (when (find |(= (first $) :focus) (r :effects))
+            (errorf "F8 :focus emitted for a hidden OS-focused window: %q" event)))))))
+
+(defn check-effects [old r event]
+  (def s (r :state))
+  (def p (st/placements s))
+  (def fx (r :effects))
+  (def kind (get event 0))
+  (each e fx
+    (case (e 0)
+      :place (do
+               (when (st/floating? s (e 1))
+                 (errorf "F2 :place for a floating window after %q" event))
+               (unless (and (p (e 1)) (= (p (e 1)) (e 2)))
+                 (errorf "E1/F2 stale or missing :place after %q" event)))
+      :focus (unless (= (e 1) (st/focused s))
+               (errorf "E2 wrong :focus after %q" event))))
+  # E3 echo suppression: what the OS already did is never sent back as :focus
+  (when (silent-kinds kind)
+    (when (find |(= (first $) :focus) fx)
+      (errorf "E3 silent event echoed a :focus: %q" event)))
+  # E4 focus completeness: a non-silent event that moved the visible
+  # workspace's focus must say so
+  (when (and (not (silent-kinds kind)) (st/focused s)
+             (not (s :external-focus))
+             (not= (st/focused s) (st/focused old))
+             (= (s :current) (old :current))
+             (not= kind :window-moved))
+    (unless (find |(= $ [:focus (st/focused s)]) fx)
+      (errorf "E4 focus changed without :focus effect after %q" event)))
+  (check-window-seen old r event)
+  # E12 (was E5): destructive commands act only on the window the OS last
+  # reported as focused, no matter what the model believes
+  (def os-focus (old :os-focus))
+  (each e fx
+    (when (index-of (first e) [:close :send])
+      (unless (and os-focus (= (e 1) os-focus))
+        (errorf "E12 %q targets %q but the OS focus was %q (after %q)"
+                (first e) (e 1) os-focus event))))
+  (when (and (= kind :command)
+             (index-of (get event 1) [:swap-next :swap-prev :swap-master :shift-master])
+             (not (and (st/focused old) (= (st/focused old) os-focus))))
+    (unless (= (st/current-ws s) (st/current-ws old))
+      (errorf "E12 reordered while the focused window is not the OS-focused one: %q"
+              event))))
+
+(defn check-external [old r event]
+  # E10c: a snapshot may clear external only by adopting the observed OS focus
+  (when (and (old :external-focus) (= (get event 0) :windows-observed)
+             (not ((r :state) :external-focus)))
+    (unless (and ((r :state) :os-focus)
+                 (= (st/focused (r :state)) ((r :state) :os-focus)))
+      (errorf "E10 snapshot cleared external without adopting OS focus: %q" event)))
+  # E10b: window-opened clears external only when adopting the observed focus
+  (when (and (old :external-focus) (index-of (get event 0) [:window-opened :window-seen])
+             (not ((r :state) :external-focus)))
+    (unless (and (= (get event 1) (old :os-focus)) (old :os-focus))
+      (errorf "E10 window-opened/seen cleared external without an observation: %q" event)))
+  # E10: external focus is cleared only by observations of OS focus
+  (when (and (old :external-focus) (non-focus-observation (get event 0))
+             (not ((r :state) :external-focus)))
+    (errorf "E10 external focus cleared by a non-observation: %q" event))
+  # E11: while external, no :focus is derived unless the user asked for one
+  (when (and ((r :state) :external-focus)
+             (not (and (= (get event 0) :command)
+                       (index-of (get event 1) [:focus-next :focus-prev :focus-master :goto]))))
+    (when (find |(= (first $) :focus) (r :effects))
+      (errorf "E11 stole focus while external: %q" event))))
+
+(defn check-observed [old r event]
+  # after a snapshot the model holds exactly the valid observed windows
+  (when (= (get event 0) :windows-observed)
+    (def obs (get event 1))
+    (when (and (indexed? obs) (all |(and (indexed? $) (not (nil? (get $ 0)))) obs)
+               (all |(or (number? (get $ 0)) (keyword? (get $ 0)) (string? (get $ 0))) obs)
+               (all |(or (nil? (get $ 1)) (index-of (get $ 1) tags)) obs))
+      (def s (r :state))
+      (def good-facts |(if (dictionary? (get $ 2)) (get $ 2)))
+      (def old-ids (stack-ids old))
+      (def want
+        (distinct
+          (map first
+               (filter
+                 (fn [e]
+                   (def f (good-facts e))
+                   (cond
+                     (nil? f) true
+                     (cl/hidden? f) false
+                     (index-of (first e) old-ids) true
+                     (not= :ignore (cl/classify (old :rules) f))))
+                 (let [seen (table)]   # the first occurrence of an id wins
+                   (filter |(if (seen (first $)) false (put seen (first $) true)) obs))))))
+      (def have (mapcat |(((s :workspaces) $) :ids) (s :tags)))
+      (unless (deep= (sort (array ;want)) (sort (array ;have)))
+        (errorf "R4 snapshot mismatch after %q: have %q" event have)))))
+
+(defn check-idempotent [s event]
+  (when (idempotent-kinds (get event 0))
+    (def r1 (u/update s event))
+    (def r2 (u/update (r1 :state) event))
+    (unless (and (deep= (r1 :state) (r2 :state)) (empty? (r2 :effects)))
+      (errorf "E6 not idempotent: %q -> %q" event (r2 :effects)))))
+
+(deftest "random event sequences preserve all invariants"
+  (for seed 0 300
+    (def rng (math/rng seed))
+    (var s (new-state rng))
+    (for _ 0 150
+      (def e (random-event rng))
+      (def r (u/update s e))
+      (check-invariants (r :state) e)
+      (check-effects s r e)
+      (check-external s r e)
+      (check-observed s r e)
+      (check-idempotent s e)
+      (set s (r :state)))))
+
+(deftest "core never throws on any event"
+  (def rng (math/rng 5))
+  (var s (new-state rng))
+  (for _ 0 2000
+    (set s ((u/update s (random-event rng)) :state)))
+  (is (st/current-ws s)))
+
+(deftest "a mirror driven only by effects never drifts from the model"
+  (for seed 0 100
+    (def rng (math/rng (+ 1000 seed)))
+    (var s (new-state rng))
+    (def mirror @{})
+    (for _ 0 200
+      (def e (random-event rng))
+      (def r (u/update s e))
+      (each fx (r :effects)
+        (when (= (fx 0) :place) (put mirror (fx 1) (fx 2))))
+      (set s (r :state))
+      (def p (st/placements s))
+      (eachk id p
+        (unless (= (mirror id) (p id))
+          (errorf "mirror drift for %q after %q (seed %d)" id e seed))))))
+
+(deftest "refresh re-asserts every visible placement"
+  # (this does NOT cover model-side drift -- ghosts, wrong workspace; that is
+  # what :windows-observed is for, tested above via check-observed)
+  (for seed 0 100
+    (def rng (math/rng (+ 5000 seed)))
+    (var s (new-state rng))
+    (for _ 0 60 (set s ((u/update s (random-event rng)) :state)))
+    (def mirror @{})
+    (eachp [id r] (st/placements s)
+      (put mirror id (g/rect (math/rng-int rng 100) 0 1 1))) # garbage
+    (def r (u/update s [:command :refresh]))
+    (each fx (r :effects)
+      (when (= (fx 0) :place) (put mirror (fx 1) (fx 2))))
+    (eachp [id rect] (st/placements (r :state))
+      (is= rect (mirror id)))
+    (is= (s :external-focus) ((r :state) :external-focus))
+    (def f (st/focused (r :state)))
+    (when (and f (not ((r :state) :external-focus)))
+      (is (find |(= $ [:focus f]) (r :effects))))))
+
+(deftest "R1: focus-changed and desktop-changed commute"
+  # Jwno delivers them asynchronously and in either order
+  (for seed 0 300
+    (def rng (math/rng (+ 9000 seed)))
+    (var s (st/make (first screens) tags))
+    (for _ 0 40 (set s ((u/update s (random-event rng)) :state)))
+    (def ids (mapcat |(((s :workspaces) $) :ids) (s :tags)))
+    (unless (empty? ids)
+      (def x (pick rng ids))
+      (def tag (st/locate s x))
+      (def a (reduce |((u/update $0 $1) :state) s
+                     [[:focus-changed x] [:desktop-changed tag]]))
+      (def b (reduce |((u/update $0 $1) :state) s
+                     [[:desktop-changed tag] [:focus-changed x]]))
+      (is= (a :current) (b :current))
+      (is= tag (a :current))
+      (is= x (st/focused a))
+      (is= x (st/focused b))
+      (is (not (a :external-focus)))
+      (is (not (b :external-focus))))))
+
+(deftest "R2: echoing our own :place back as :window-moved yields nothing"
+  (for seed 0 200
+    (def rng (math/rng (+ 12000 seed)))
+    (var s (new-state rng))
+    (for _ 0 60 (set s ((u/update s (random-event rng)) :state)))
+    (eachp [id rect] (st/placements s)
+      (def r (u/update s [:window-moved id rect]))
+      (is= [] (r :effects)))))
+
+(deftest "R2: an app that refuses its size is re-placed a bounded number of times"
+  (var s (st/make (first screens) tags))
+  (set s ((u/update s [:window-opened :a]) :state))
+  (var places 0)
+  (for _ 0 20
+    # the app keeps reporting a rect different from the model's
+    (def r (u/update s [:window-moved :a (g/rect 1 2 3 4)]))
+    (set s (r :state))
+    (+= places (length (r :effects))))
+  (is= 3 places)
+  # a refresh clears the verdict
+  (set s ((u/update s [:command :refresh]) :state))
+  (is= 1 (length ((u/update s [:window-moved :a (g/rect 1 2 3 4)]) :effects))))
+
+(deftest "S1/E13: observing focus on a visible managed window makes it actionable"
+  (for seed 0 300
+    (def rng (math/rng (+ 15000 seed)))
+    (var s (st/make (first screens) tags))
+    (for _ 0 40 (set s ((u/update s (random-event rng)) :state)))
+    (def vis ((st/current-ws s) :ids))
+    (unless (empty? vis)
+      (def x (pick rng vis))
+      (def s2 ((u/update s [:focus-changed x]) :state))
+      (is= x (st/focused s2))
+      (is= [[:close x]] ((u/update s2 [:command :close]) :effects)))))
+
+(deftest "S1/E13: focus reported before window-opened is adopted"
+  (for seed 0 100
+    (def rng (math/rng (+ 16000 seed)))
+    (var s (st/make (first screens) tags))
+    (for _ 0 30 (set s ((u/update s (random-event rng)) :state)))
+    (def n (keyword "fresh" seed))
+    (def s2 (reduce |((u/update $0 $1) :state) s [[:focus-changed n] [:window-opened n]]))
+    (is= [[:close n]] ((u/update s2 [:command :close]) :effects))))
+
+(deftest "S2: dropping every :focus effect never lets close hit an unseen window"
+  # the OS ignores all our :focus; it only ever reports what it really did
+  (for seed 0 200
+    (def rng (math/rng (+ 17000 seed)))
+    (var s (new-state rng))
+    (for _ 0 150
+      (def e (random-event rng))
+      (def r (u/update s e))
+      (each fx (r :effects)
+        (when (= (first fx) :close)
+          # the real OS focus is exactly what we last observed
+          (is= (fx 1) (s :os-focus))))
+      (set s (r :state)))))
+
+(deftest "T2: focus and snapshot commute (startup and reload)"
+  (for seed 0 300
+    (def rng (math/rng (+ 20000 seed)))
+    (var s (st/make (first screens) tags))
+    (for _ 0 30 (set s ((u/update s (random-event rng)) :state)))
+    (def x (keyword "obs" (math/rng-int rng 6)))
+    (def snap [:windows-observed
+               (tuple ;(seq [i :range [0 (+ 1 (math/rng-int rng 4))]]
+                         [(keyword "obs" i) (s :current)]) [x (s :current)])])
+    (def run2 |(reduce (fn [acc e] ((u/update acc e) :state)) s $))
+    (def a (run2 [[:focus-changed x] snap]))
+    (def b (run2 [snap [:focus-changed x]]))
+    (is= x (st/focused a))
+    (is= x (st/focused b))
+    (is (not (a :external-focus)))
+    (is (not (b :external-focus)))
+    (is= [[:close x]] ((u/update a [:command :close]) :effects))
+    (is= [[:close x]] ((u/update b [:command :close]) :effects))))
+
+(deftest "F9: toggle-float keeps stack order and focus; twice is the identity"
+  (for seed 0 300
+    (def rng (math/rng (+ 30000 seed)))
+    (var s (new-state rng))
+    (for _ 0 40 (set s ((u/update s (random-event rng)) :state)))
+    (def vis ((st/current-ws s) :ids))
+    (unless (empty? vis)
+      (def s1 ((u/update s [:focus-changed (pick rng vis)]) :state))
+      (def r1 (u/update s1 [:command :toggle-float]))
+      (def r2 (u/update (r1 :state) [:command :toggle-float]))
+      (is= (st/current-ws s1) (let [w (st/current-ws (r2 :state))] w))
+      (is= (s1 :floating) ((r2 :state) :floating))
+      (is= ((st/current-ws s1) :ids) ((st/current-ws (r1 :state)) :ids))
+      (is= (st/focused s1) (st/focused (r1 :state)))
+      (is (empty? (filter |(= (first $) :focus) (r1 :effects))))
+      (is (not= (st/floating? s1 (st/focused s1)) (st/floating? (r1 :state) (st/focused s1)))))))
+
+(deftest "F6: a user toggle survives repeated window-seen with the same facts"
+  (def plain {:class "K" :exe "C:\\x\\c.exe" :visible? true})
+  (for seed 0 100
+    (def rng (math/rng (+ 31000 seed)))
+    (var s (new-state rng))
+    (def id :target)
+    (set s ((u/update s [:window-seen id plain]) :state))
+    (set s ((u/update s [:focus-changed id]) :state))
+    (when (st/locate s id)
+      (def was (st/floating? s id))
+      (set s ((u/update s [:command :toggle-float]) :state))
+      (is= (not was) (st/floating? s id))
+      (for _ 0 5
+        (set s ((u/update s [:window-seen id plain]) :state))
+        (set s ((u/update s [:windows-observed [[id (st/locate s id) plain]]]) :state)))
+      (is= (not was) (st/floating? s id)))))
+
+(deftest "F1: a closed window's id is new again (HWND reuse)"
+  (var s (st/make (first screens) tags [{:match {:exe "a.exe"} :action :float}]))
+  (def fl {:exe "C:\\x\\a.exe" :visible? true})
+  (set s ((u/update s [:window-seen :w fl]) :state))
+  (is (st/floating? s :w))
+  (set s ((u/update s [:window-closed :w]) :state))
+  (is (not (st/floating? s :w)))
+  (is (not (st/locate s :w)))
+  (set s ((u/update s [:window-seen :w {:exe "C:\\x\\c.exe" :visible? true}]) :state))
+  (is (not (st/floating? s :w)))
+  (is (st/locate s :w)))
