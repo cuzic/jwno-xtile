@@ -22,8 +22,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           curl -fsSL -o janet.tgz "https://github.com/janet-lang/janet/releases/download/${JANET_VERSION}/janet-${JANET_VERSION}-linux-x64.tar.gz"
-          mkdir janet && tar -xzf janet.tgz -C janet --strip-components=1
-          echo "$PWD/janet/bin" >> "$GITHUB_PATH"
+          mkdir janet && tar -xzf janet.tgz -C janet
+          bin="$(dirname "$(find "$PWD/janet" -type f -name janet -path '*/bin/*' | head -1)")"
+          echo "janet found in: $bin"
+          echo "$bin" >> "$GITHUB_PATH"
 
       - name: Install Janet (Windows)
         if: runner.os == 'Windows'
@@ -32,7 +34,10 @@ jobs:
           $v = $env:JANET_VERSION.TrimStart('v')
           Invoke-WebRequest "https://github.com/janet-lang/janet/releases/download/$env:JANET_VERSION/janet-$v-windows-x64-installer.msi" -OutFile janet.msi
           Start-Process msiexec.exe -Wait -ArgumentList '/i', 'janet.msi', '/qn', '/norestart'
-          "C:\Program Files\Janet\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          $exe = Get-ChildItem -Path 'C:\Program Files','C:\Program Files (x86)',$env:LOCALAPPDATA,$env:ProgramData -Recurse -Filter janet.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'janet.exe not found after install' }
+          Write-Host "janet found in: $($exe.DirectoryName)"
+          $exe.DirectoryName | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
       - name: Janet version
         run: janet -v
