@@ -112,6 +112,12 @@ jobs:
         run: dir ${{ env.JWNO_DIR }}\build
 
       # ---- probes: each continues on error; a failure is data ----
+      - name: Contract tests - the xtile adapter on a real Jwno
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: ./xtile/spike/run-contract.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -RepoRoot "${{ github.workspace }}\xtile" -Config "${{ github.workspace }}\xtile\spike\contract-config.janet" -Out spike-out
+
       - name: Run Jwno with the probe config
         if: always()
         continue-on-error: true

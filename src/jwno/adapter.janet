@@ -126,6 +126,7 @@
     (unless (or (w :minimized? hwnd) (w :hung? hwnd))
       (def actual (jwno->rect (:get-rect win true)))
       (unless (= actual rect)
+        (log-fn :debug (string/format "place mismatch id=%q want=%q actual=%q" id rect actual))
         (spawn (fn [] (dispatch! [:window-moved id actual]))))))
 
   (defn enumerate []
