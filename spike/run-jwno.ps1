@@ -56,7 +56,7 @@ function Chord([byte]$vk, $label) {
   foreach ($k in $vk, 0x11, 0x5B) { [F]::keybd_event($k, 0, 2, [UIntPtr]::Zero) }
   Act "chord $label"
 }
-function Where($label, $h) {
+function Report($label, $h) {
   Act ("where {0}: fg={1} target_on_current_desktop=[{2}]" -f $label, (Ptr ([F]::GetForegroundWindow())), [F]::OnCurrent($h))
 }
 function Launch($label) {
@@ -114,9 +114,9 @@ Focus $hB2 "B2" $true 1000
 
 Act "== S9 desktop round trip; focus was B2 =="
 Chord 0x44 "Win+Ctrl+D (new desktop, switch to it)"; Start-Sleep 3
-Where "on new desktop" $hB2
+Report "on new desktop" $hB2
 Chord 0x25 "Win+Ctrl+Left (back to desktop 1)"; Start-Sleep 3
-Where "back on desktop 1 (was B2 focused before?)" $hB2
+Report "back on desktop 1 (was B2 focused before?)" $hB2
 
 foreach ($delay in 0, 150, 600) {
   Act ("== S10 race: switch away/back, our :focus(C2) {0}ms after the switch-back ==" -f $delay)
@@ -126,17 +126,26 @@ foreach ($delay in 0, 150, 600) {
   if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
   Focus $hC2 ("C2(our focus +{0}ms)" -f $delay) $true 100
   Start-Sleep 3
-  Where ("final after +{0}ms race (we wanted C2)" -f $delay) $hC2
+  Report ("final after +{0}ms race (we wanted C2)" -f $delay) $hC2
 }
 
 Act "== S11 our :focus on a window of ANOTHER desktop =="
 Focus $hB2 "B2(reset)" $true 800
 Chord 0x27 "Win+Ctrl+Right (to desktop 2)"; Start-Sleep 2
-Where "on desktop 2, before" $hB2
+Report "on desktop 2, before" $hB2
 Focus $hB2 "B2 from desktop 2 (alt)" $true 1500
-Where "on desktop 2, after focusing B2 (desktop 1 window)" $hB2
+Report "on desktop 2, after focusing B2 (desktop 1 window)" $hB2
 Chord 0x25 "Win+Ctrl+Left (ensure desktop 1)"; Start-Sleep 2
-Where "end" $hB2
+Report "end of S11" $hB2
+
+Act "== S11b our :focus(C2) from desktop 2, while Jwno remembers B2 as desktop 1's current window =="
+Focus $hB2 "B2(reset)" $true 800
+Chord 0x27 "Win+Ctrl+Right (to desktop 2)"; Start-Sleep 2
+Focus $hC2 "C2 from desktop 2 (alt)" $true 100
+Report "100ms after our focus(C2)" $hC2
+Start-Sleep 3
+Report "3s after our focus(C2) (we wanted C2; Jwno remembers B2)" $hC2
+Chord 0x25 "Win+Ctrl+Left (ensure desktop 1)"; Start-Sleep 2
 
 foreach ($p in @($B2, $C2)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
 Act ("jwno alive at end={0}" -f (-not $j.HasExited))
