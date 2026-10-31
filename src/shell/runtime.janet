@@ -8,6 +8,7 @@
 #              :current-desktop () -> tag|nil
 #              :enumerate () -> [[id tag-or-nil facts] ...]   :work-area () -> rect
 #   misc:      :later (seconds thunk)  :log (level msg)  :notify (kind id)
+#   config:    :reassert? (default true) -- ADR 0009 R-10 switch (false = mitigation A only)
 # Any port function may throw; the runtime protects every call.
 # Everything here is UNVERIFIED ON WINDOWS: the port shape is imagined until
 # the Jwno adapter's contract tests exist.
@@ -17,6 +18,7 @@
 
 (def- max-recoveries 3)
 (def- reobserve-delay 0.2)
+(def- reassert-delay 0.25)  # ADR 0009 R-10; Jwno refocuses 15-30ms after a switch on a quiet runner
 (def- recovery-delay 1.0)   # longer than the re-observation: do not race the user
 
 (defn make
@@ -109,9 +111,13 @@
             true)))   # a deliberate drop is not a failure
     (do (log rt :warn (string "unknown effect " (first fx))) true)))
 
-(defn- run-effects [rt effects]
+(defn- run-effects
+  "-> [failed observe? n goto+focus-ok?]"
+  [rt effects]
   (var failed 0)
   (var goto-failed false)
+  (var goto-ok false)
+  (var focus-ok false)
   (var observed-needed false)
   (each fx effects
     (cond
@@ -121,8 +127,17 @@
         (unless ok
           (++ failed)
           (when (= (first fx) :goto) (set goto-failed true)))
+        (when (and ok (= (first fx) :goto)) (set goto-ok true))
+        (when (and ok (= (first fx) :focus)) (set focus-ok true))
         (when (index-of (first fx) [:focus :goto]) (set observed-needed true)))))
-  [failed observed-needed (length effects)])
+  [failed observed-needed (length effects) (and goto-ok focus-ok)])
+
+(defn- schedule-reassert
+  "ADR 0009 R-10: ask the core once, later, whether the :goto's focus stuck. The
+  core decides (pending-focus); a late timer with nothing pending is a no-op."
+  [rt]
+  (when (not= false (get (rt :ctx) :reassert?))
+    (call rt :later reassert-delay (fn [] (redispatch rt [:command :reassert-focus])))))
 
 (defn- process-one
   "Process the event; -> nil. Never throws."
@@ -140,7 +155,8 @@
     (log rt :error (string "update threw: " r))
     (do
       (put rt :state (r :state))                       # R-2: save first
-      (def [failed observe? n] (run-effects rt (r :effects)))
+      (def [failed observe? n goto+focus?] (run-effects rt (r :effects)))
+      (when goto+focus? (schedule-reassert rt))
       (when (> failed 0) (schedule-recovery rt))
       (when (and (zero? failed) (> n 0)) (put rt :failures 0))
       (when (or observe? (= (get event 0) :desktop-changed))

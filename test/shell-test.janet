@@ -284,3 +284,89 @@
   (is= "2" ((rt/state r) :current))       # the core got ahead of the OS
   (run-later! os)
   (is= "1" ((rt/state r) :current)))
+
+# ---- R-10: delayed :reassert-focus after a :goto that carried a :focus ----
+
+(defn goto-setup
+  "a on 1; b, c on 2; the user is on 1. Our :focus never lands (lock), the OS keeps showing b."
+  [&opt extra]
+  (def os (fake-os))
+  (def ctx (merge (os :ctx) (or extra {})))
+  (def r (rt/make ctx (st/make screen ["1" "2" "3"])))
+  (each id [:a :b :c] (array/push (os :windows) id))
+  (rt/dispatch r [:window-opened :a])
+  (rt/dispatch r [:window-opened :b "2"])
+  (rt/dispatch r [:window-opened :c "2"])
+  (rt/dispatch r [:focus-changed :a])
+  (put os :fg :a)
+  (array/clear (os :later))
+  (array/clear (os :calls))
+  [os r])
+
+(defn reassert-timers [os] (filter |(= 0.25 (first $)) (os :later)))
+
+(deftest "R-10: a goto+focus batch schedules one late question to the core, which re-issues the focus"
+  (def [os r] (goto-setup))
+  (put os :focus-lock true)                 # our :focus does nothing; the OS stays on b
+  (put os :fg :b)
+  (rt/dispatch r [:command :goto "2"])
+  (is= 1 (length (reassert-timers os)))
+  (is= :b (st/focused (rt/state r)))        # the model adopted what the OS showed...
+  (is= :c (get-in (rt/state r) [:pending-focus :target]))   # ...but remembers what we wanted
+  (def before (length (filter |(= $ [:focus :c]) (os :calls))))
+  (put os :focus-lock false)                # the retry will succeed
+  (run-later! os)
+  (is= (+ before 1) (length (filter |(= $ [:focus :c]) (os :calls))))
+  (is= :c (os :fg))
+  (is (nil? ((rt/state r) :pending-focus))))
+
+(deftest "R-10: nothing to reassert when the focus stuck, or for a failed :goto, or with :reassert? false"
+  (def [os r] (goto-setup))
+  (rt/dispatch r [:command :goto "2"])      # our focus lands: fg = c
+  (run-later! os)
+  (is= 1 (length (filter |(= $ [:focus :c]) (os :calls))))   # only the original
+
+  (def [os2 r2] (goto-setup))
+  (put (os2 :fail) :goto true)
+  (rt/dispatch r2 [:command :goto "2"])
+  (is= 0 (length (reassert-timers os2)))
+
+  (def [os3 r3] (goto-setup {:reassert? false}))
+  (rt/dispatch r3 [:command :goto "2"])
+  (is= 0 (length (reassert-timers os3)))
+
+  (def [os4 r4] (goto-setup))               # a plain focus move is not a goto episode
+  (rt/dispatch r4 [:command :focus-next])
+  (is= 0 (length (reassert-timers os4))))
+
+(deftest "R-10: a new intent before the timer fires cancels the retry (the core dropped the pending focus)"
+  (def [os r] (goto-setup))
+  (put os :focus-lock true)
+  (put os :fg :b)
+  (rt/dispatch r [:command :goto "2"])
+  (rt/dispatch r [:command :focus-next])    # the user decided something else
+  (put os :focus-lock false)
+  (array/clear (os :calls))
+  (run-later! os)
+  (is= 0 (length (filter |(= (first $) :focus) (os :calls)))))
+
+(deftest "R-10: never steals focus from a window the core does not manage"
+  (def [os r] (goto-setup))
+  (put os :focus-lock true)
+  (put os :fg :stranger)
+  (rt/dispatch r [:command :goto "2"])
+  (array/clear (os :calls))
+  (run-later! os)
+  (is= 0 (length (filter |(= (first $) :focus) (os :calls)))))
+
+(deftest "R-10: goto burst - the late timers are harmless"
+  (def [os r] (goto-setup))
+  (put os :focus-lock true)
+  (put os :fg :b)
+  (rt/dispatch r [:command :goto "2"])
+  (rt/dispatch r [:command :goto "1"])
+  (rt/dispatch r [:command :goto "2"])
+  (put os :focus-lock false)
+  (array/clear (os :calls))
+  (run-later! os)                           # three timers (and re-observations) fire
+  (is (<= (length (filter |(= (first $) :focus) (os :calls))) 1)))
