@@ -16,12 +16,13 @@
 
 (defn- num [x] (if (number? x) x (int/to-number x)))
 
-(defn- unsigned-32
-  "GetWindowLong sometimes comes back already unsigned (a WS_POPUP window has bit 31 set): Jwno's
-  signed-to-unsigned-32 then throws 'out of range for 32-bit signed integers' (contract test log)."
+(defn- bits-32
+  "The 32 style bits as a signed 32-bit number. Janet's `band` takes 32-bit SIGNED integers only: a
+  WS_POPUP style (bit 31) as an unsigned 2496135621 makes `band` throw 'out of range for 32-bit signed
+  integers' (contract test CT-16 found this). Two's complement keeps `band` with small masks correct."
   [x]
-  (def v (num x))
-  (if (< v 0) (+ v 4294967296) (if (> v 4294967295) (mod v 4294967296) v)))
+  (def v (mod (num x) 4294967296))
+  (if (>= v 2147483648) (- v 4294967296) v))
 
 (defn- true? [x] (not= FALSE x))
 
@@ -106,7 +107,7 @@
   contract test CT-1 listed it) because GetWindowLong throws for styles with bit 31 set."
   [hwnd idx]
   (def f (or (opt "GetWindowLongPtr") GetWindowLong))
-  (guarded nil (fn [] (unsigned-32 (f hwnd idx)))))
+  (guarded nil (fn [] (bits-32 (f hwnd idx)))))
 
 (defn facts
   "classify's facts (ADR 0008). Win32 only -- no UIA, because the poll calls this for every window."
