@@ -122,20 +122,50 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 - 影響: 新しい窓が開くたびに `[:show id]` が 1 つ増える（`:place` の前、`:hide` の後）。`runtime` の effect の実行順は変えない。`effect-rank` は変更なし。
 - 検討して採らなかった案: アダプタが `windows-observed` の後に `parked` と Core の state を突き合わせて unpark する案。アダプタが Core の state を読むので、ADR 0001（判断は Core）と合わない。
 
-### D-7 可視ワークスペースが空になったら、OS のフォーカスを管理窓から外す（H3。新しい effect `[:focus-none]`）
-- 問題: 空のワークスペースへ `goto` すると、画面には何も無いが、前面の窓は park された（画面外の）窓のまま。打鍵は見えない窓に入る（ターミナルならコマンドが実行される）。
-  最後の窓を `send` したとき、最後の窓を閉じたとき（Windows は Z 順の次の窓＝park 済みの窓へフォーカスを渡しうる）も同じ。xmonad では、空のワークスペースのフォーカスはルート窓で、打鍵はどこにも入らない。
-- 決定: 新しい effect **`[:focus-none]`**。Core は、遷移の結果 `vis(new)` が空で、`silent?` でなく、かつ次のどちらかのとき出す。
-  1. `:current` が変わった（`goto`、`send` で現在のワークスペースが変わる場合ではなく `goto-tag`／`shift` 系）。
-  2. 旧の state が `external?` でなく、旧の `vis` が空でなかった（最後の窓が閉じた・送り出された）。
-  ユーザーが管理外の窓（スタートメニューなど）を使っている間に、背景で管理窓が閉じても、フォーカスを奪わない（旧が external なら 2 は出ない）。
-- 不変条件 **F12**: `[:focus-none]` と `[:focus id]` は同じ effect 列に同時に出ない。`[:focus-none]` は `vis(new)` が空のときだけ出る。遷移が無い（state が変わらない）ときは出ない。
-  順序は `hide` → `show` → `place` → `focus`／`focus-none`（最後）。
-- アダプタ: ポート `:focus-none` は Jwno の `(:set-focus-to-desktop wm)`（win.janet:3669）を呼ぶ。ポートが無い／失敗した場合は何もしない（ランタイムは各ポートを protect する）。
-  **unverified on Windows**: デスクトップ（Progman）への SetForegroundWindow が前面ロックで拒否されうる。そのときは、少なくとも park 済みの窓にフォーカスが残る状況は変わらない（現状と同じ）。
-  結果として届く `focus-changed`（デスクトップの hwnd）は、管理外の窓として `external` を立てる（E 系の既存の扱い）。R-10 の再主張は `:focus` だけが対象なので、`focus-none` を再主張しない。
-- 検討して採らなかった案: 空のワークスペースの代わりに「ダミーの透明窓」を作る案（窓を1つ増やす割に利点が少ない）。park した窓に `WS_EX_NOACTIVATE` を足す案（Jwno の transform の外で窓のスタイルを書き換える）。
+### D-7 OS のフォーカスが park した窓にあるのを正す（H3。Opus の再レビュー D7-H1・H2・M1〜M3 を受けて**書き直した**。新しい effect `[:focus-none]`）
+- 問題: park した窓は画面外なのに、OS のフォーカス（前面）がそこに残りうる。打鍵は見えない窓に入る（ターミナルならコマンドが実行される）。起きる場面は 3 つ以上ある。
+  (a) 空のワークスペースへ `goto`／最後の窓の `send`（前面の窓が park される）。(b) 窓を閉じた後、Windows が Z 順で次の窓＝park 済みの窓をアクティブにする
+  （ワークスペースが空でなくても起きる）。(c) タスクバー／Alt-Tab で park した窓を選ぶ。(a) の初案（遷移で発火）は (b) をほぼ拾えず、全画面にした窓からフォーカスを奪う穴もあった。
+- 決定: 発火条件を遷移ではなく**状態**で書く。Core の関数 `stray-focus`（純粋）: 「`:os-focus` が、Core が知っている窓で、かつ可視ワークスペースに無い」ならば、
+  `vis(s)` が空 → `[:focus-none]`、空でない → `[:focus (st/focused s)]`。`:os-focus` が無い／Core が知らない窓（スタートメニュー、ダイアログ、`ignore` した窓、
+  全画面で `drop-hidden` された窓）なら**何も出さない**（E11 の「管理外の窓からフォーカスを奪わない」を保つ。全画面の動画からフォーカスを奪う穴も消える）。`external` は無視する
+  （park した窓へのフォーカスは「ユーザーが選んだ管理外の窓」ではない）。
+- 使う場所:
+  1. `derive-effects`: **silent でない**遷移の結果に `stray-focus` を足す（`goto`、`send`、`window-closed`、`window-seen` など。既存の `[:focus …]` と重なるときは既存を優先し、重複して出さない）。
+  2. 新しい内部コマンド **`:reclaim-focus`**（`:reassert-focus` と同じく束縛不可、K3）。実行すると `stray-focus` だけを評価する（`:refresh` からの呼び出しも同じ）。
+  3. ランタイムが `:reclaim-focus` を予約する（R-10 と同じ形、250ms 後）: (i) 毎回の `focus-changed` の処理の後（これは silent なので 1. では拾えない）、(ii) `:hide`／`:show` を含む effect の実行の後。
+     発火時の state で評価するので、`focus-changed P` と `window-closed A` の到着順に依存しない（D7-H1）。ポーリング（`windows-observed`、silent）で閉じたことに気付く場合も、(ii) でなく (i) の予約が後から効く。
+  4. 無限ループの防止: `:reclaim-focus` が出した `:focus`／`:focus-none` が拒否される（前面ロック）と、再観測で `focus-changed` が来て再び予約される。連続 3 回で諦める
+     （カウンタは `:os-focus` が可視ワークスペースの窓、または管理外になったらリセット。`:misfit` と同じ考え方）。
+- 既定の挙動の決定: ユーザーがタスクバー／Alt-Tab で park した窓を選んでも、約 250ms 後に可視の窓へ戻される（見えない窓へのフォーカスは使い道が無い）。
+  「選んだワークスペースへ移る」は将来の `goto` オプション（上記 D-5）で、既定にはしない。
+- 空のワークスペースから空のワークスペースへの `goto` でも、管理外の窓にフォーカスがあれば何もしない（上の規則）。`goto` は空でないワークスペースへの移動では管理外の窓からも
+  フォーカスを奪う（`explicit-focus`、既存の仕様）が、空への `goto` は奪わない。この非対称は意図したもの（奪う対象が無い）。
+- 不変条件:
+  - **F12a（活性）**: `stray-focus` の前提（`:os-focus` が既知で可視でない）が成り立つ非 silent な遷移と `:reclaim-focus` の結果には、`[:focus id]` か `[:focus-none]` のちょうど一方が含まれる。
+  - **F12b（奪わない）**: `:os-focus` が無い、または Core が知らない窓なら、`stray-focus` は何も出さない。
+  - **F12c**: silent な event（`focus-changed`、`windows-observed`、`desktop-changed`）の直接の結果に `[:focus-none]` は含まれない（E3 の拡張。回復は `:reclaim-focus` が担う）。
+  - **F12d**: `[:focus-none]` と `[:focus id]` は同じ effect 列に同時に出ない。`[:focus-none]` は `vis(new)` が空のときだけ。状態が変わらず `:os-focus` が正しいときは何も出ない（冪等）。
+  - 順序は `hide` → `show` → `place` → `focus`／`focus-none`（最後）。
+- ランタイム: `execute` に `:focus-none` を足す。`run-effects` は `:focus-none` でも `observed-needed` を立てる（前面を再観測し `schedule-reobserve`）。`goto+focus?`（R-10 の予約）には含めない。
+- アダプタ: ポート `:focus-none` は Jwno の `(:set-focus-to-desktop wm)`（win.janet:3669）。`wm :set-focus` を通らないので A の抑止の対象外（`desktop-name-changed` の中で動くことはない。dispatch は spawn で後回し）。
+  Jwno の「現在のフレーム」は変わらない（Jwno の組み込みコマンドが park した窓を前面に出しうる。許容、unverified on Windows）。結果の `focus-changed` はデスクトップの hwnd か nil。どちらでも Core は管理外として扱い、
+  `stray-focus` は出さない（F12b）ので、ループしない。**unverified on Windows**: デスクトップへのフォーカスが前面ロックで拒否されうる。そのときは 3. の再試行（3 回）で諦め、現状と同じ状態に戻る。
+- 検討して採らなかった案: 空のワークスペースの代わりに「ダミーの透明窓」を持つ案。park した窓に `WS_EX_NOACTIVATE` を足す案（Jwno の transform の外で窓のスタイルを書き換える）。
+  遷移ごとに発火条件を列挙する初案（上記のとおり (b) と silent の経路を拾えない）。
+
+### D-6 の補足（Opus の再レビュー D6-M1・M2・L1・L2）
+- アダプタの `:show` は「`parked` にあれば元の rect へ。無くても、窓の見える枠が x < -30000（最小化でない）なら作業領域へ戻す」（`recover-strays` と同じ判定）。`parked` が先に消える経路
+  （トレイ型アプリの `SW_HIDE` を Jwno が purge した、など）でも、画面外に残らない。
+- `:window-removed` フックは、`IsWindow` が真なら `parked` のエントリを消さない（死んだ窓だけ消す）。HWND の再利用で古い rect へ新しい窓を動かさないよう、
+  エントリは `IsWindow` が偽になった時点（ポーリング）で捨てる。
+- `:refresh` は可視ワークスペースの全窓に `:show` を出し直す（アダプタは画面外のものだけ動かす）。取り残された窓の回復手段になる。
+- H-c は D-6 により Core 内では定義の言い換えになる。意味のある検査は**アダプタ側の不変条件 P-1**: 「Core の `vis(s)` の窓は画面上にある（`parked` に無い）。可視でないワークスペースの窓は park されているか最小化されている」。
+  フェイクの OS（窓の位置・最小化・可視・Z 順・前面）を使ったアダプタのプロパティテストで、ランダムな操作（goto、send、close、最小化／復元、アプリ自身の `SW_HIDE`／`SW_SHOW`、
+  仮想デスクトップの往復、ポーリング、`focus-changed` と `window-closed` の順序の入れ替え）の各ステップで P-1 と「前面の窓が park されていない」を検査する。閉じたときのフォーカスの受け渡しは
+  「Z 順の次の可視窓」でモデル化する（unverified on Windows の仮定）。
 
 ### 実装の順序
-1. 本節のレビュー（Opus）。2. Core: `visibility-effects` の `shows`、`focus-none` の導出、`effect-rank`、不変条件の更新（`docs/INVARIANTS.md` の H-b・H-c・F12）、`test/update-test.janet`・`test/property-test.janet`（H-c のミラーと F12 を生成器に加える）。
-3. ランタイム: ポート `:focus-none` の実行。4. アダプタ: ポートの実装と契約テスト（unverified on Windows の注記付き）。
+1. 本節のレビュー（Opus、2 回目）。2. Core: `visibility-effects` の `shows`、`stray-focus`、`:reclaim-focus`、`effect-rank`、不変条件の更新（`docs/INVARIANTS.md` の H-b・H-c・F12a〜d・P-1）、
+`test/update-test.janet`・`test/property-test.janet`（F12 を生成器に加える。`window-seen` で hidden を流す場合も）。3. ランタイム: `:focus-none` の実行、`:reclaim-focus` の予約（3 回で諦める）。
+4. アダプタ: `:focus-none` ポート、`:show` の画面外判定、`window-removed` と `parked`、フェイク OS のプロパティテスト。5. 契約テスト（Windows。すべて unverified on Windows として結果を記録する）。
