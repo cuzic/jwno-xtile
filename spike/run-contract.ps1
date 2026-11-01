@@ -18,6 +18,10 @@ using System; using System.Runtime.InteropServices;
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
 public static class C {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
@@ -54,7 +58,18 @@ function Chord([byte]$vk) {
 }
 function Focus($h) {
   [C]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [C]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-  [void][C]::SetForegroundWindow($h)
+  # Attach to the foreground window's input queue first: that is the documented way past the foreground lock.
+  [uint32]$pid0 = 0
+  $t1 = [C]::GetWindowThreadProcessId([C]::GetForegroundWindow(), [ref]$pid0); $t2 = [C]::GetCurrentThreadId()
+  $att = ($t1 -ne 0 -and $t1 -ne $t2) -and [C]::AttachThreadInput($t2, $t1, $true)
+  [void][C]::BringWindowToTop($h)
+  $script:lastSet = [C]::SetForegroundWindow($h)
+  if ($att) { [void][C]::AttachThreadInput($t2, $t1, $false) }
+}
+function FgInfo() {
+  [uint32]$p = 0; [void][C]::GetWindowThreadProcessId([C]::GetForegroundWindow(), [ref]$p)
+  $n = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName
+  "setfg=$($script:lastSet) fg-process=$n(pid $p) elevated=$([bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
 }
 function Frame($h) {
   $e = New-Object RECT
@@ -301,7 +316,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
 
   # ---- focus: observation and the adapter's :focus ----
   Focus $h2
-  Check "CT-9" ($(if (WaitFor { (State).os_focus -eq $i2 } 6) { "PASS" } else { "FAIL" })) "the OS focus reaches the core with the same id (GA_ROOT-normalised)" ("os_focus=" + (State).os_focus + " want=$i2")
+  Check "CT-9" ($(if (WaitFor { (State).os_focus -eq $i2 } 6) { "PASS" } else { "FAIL" })) "the OS focus reaches the core with the same id (GA_ROOT-normalised)" ("os_focus=" + (State).os_focus + " want=$i2 " + (FgInfo))
   $leaf0 = Count 'leaf-set-focus-to-hwnd'
   [void](Cmd ":xtile :focus-next"); Start-Sleep 2
   $fg = [C]::GetForegroundWindow().ToInt64()
