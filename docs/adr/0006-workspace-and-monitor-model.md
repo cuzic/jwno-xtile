@@ -199,3 +199,24 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 - **D-7g その他**: 最小化の途中（ポーリングまでの最大 2 秒）に既知のまま `[:focus F]` が出ることは許容（害が小さい。R4b-L2）。`focus-none` の後の `focus-changed` は sink 窓の hwnd（未知の id＝管理外）で、
   F12b により何も出ない。契約テストで `:os-focus` の値を記録する（R4b-L4）。P-1 は「タイマーと `:reclaim-focus` を流し切った後」の性質で、前面ロックで拒否されたとき（3 回で諦める）は正当に破れる。
   フェイク OS のテストは、そのモデル（拒否するか）を入力に含める。
+
+### 改訂 4d（2026-11-01。Opus の 3 回目の再確認 R4c-H1・H2・M1〜M4・L1〜L4 を反映。4c と食い違う点はここが優先）
+- **sink 窓は Jwno の UI スレッドで作る（R4c-H1。4c D-7b の「`win32.janet` に足す」を改める）**: Jwno の main スレッドはメッセージを回さない（アダプタの `pump` はムーブフックがあるときだけ動く）ので、そこで作った窓は
+  他のプロセスからの同期メッセージ（IME、`WM_GETOBJECT`、ブロードキャスト）に答えず「応答なし」になりうる。Jwno の `indicator.janet` と同じく、`(:add-custom-message ui-man …)` で UI スレッドに作成を頼み、
+  前面化も UI スレッドへ依頼する。WndProc は UI スレッドで動く。スパイクの確認項目に「ムーブフック無しでも sink が応答する」を足す。
+- **`:follow` は自分の副作用には反応しない（R4c-H2）**: Core の state に、`goto-tag`／`send-focused` が立て、次の `focus-changed`（観測）で下ろす印 `:stray-own` を置く。印が立っている間の `stray-focus` は、
+  設定が `:follow` でも `:return` と同じ（`goto` を出さない）。F12 に「`:follow` は、自分の `goto`／`send` で前面に残った窓に `goto` を出さない」を加え、`goto` → `:reclaim-focus` の順で検査する。
+- **実行前の「前面が実際に画面外か」の確認は `:reclaim-focus` 由来の effect だけ（R4c-M1）**: `:reclaim-focus` が出す effect には印を付ける（`[:focus f :reclaim]`、`[:focus-none :reclaim]`）。アダプタは印のある effect でだけ確認し、
+  画面上なら何もしない（ログ）。`focus-next` や `goto` の `[:focus f]`、遷移で足す `stray-focus`（ユーザー操作の直後）では確認しない（CT-10 を壊さない）。印は `order-effects` の `distinct` で通常の `[:focus f]` と別物として扱う。
+- **カウンタは id ごと（R4c-M2）**: `:reclaim-tries` は `{:id P :n k}`（struct）。`:os-focus` の id が変われば 0 から。上限（3 回）は `:reclaim-focus` にだけ掛け、`derive-effects` が遷移で足す `stray-focus` は常に評価する
+  （前面ロックで 3 回失敗した後の `goto` 空でも `[:focus-none]` は出る）。リセット: `:os-focus` が可視の窓または管理外・nil になったとき、および `:reassert-focus`／`:reclaim-focus` 以外の任意の `:command`
+  （新しい意図。`:pending-focus` と同じ扱い）。F1: その id が `close-window` で消えたら `:reclaim-tries` も消す（`:misfit` の処理と同じ箇所）。
+- **sink の除外は hwnd で（R4c-M3）**: jw32 に `GetClassName` が無い（CT-1）ので、アダプタが sink の hwnd（`hwnd->number`）を持ち、`adopt-existing!`・`recover-strays`・`enumerate` の 3 か所で除く。
+  Jwno のフィルタは `WS_EX_TOOLWINDOW` を落とすので、Jwno の木には入らない（`enumerate` は自然に除外される。明記）。
+- **sink の仕様（R4c-M4・L2）**: キー入力（`WM_KEYDOWN`／`WM_CHAR`／`WM_SYSKEYDOWN`）は捨てる。`WM_CLOSE`／`SC_CLOSE` も捨てる（`Alt+F4` で閉じない）。`WM_DESTROY` されたら作り直す。
+  タイトルは「xtile: 空のワークスペース」（スクリーンリーダー用）。抜け出す手段: Jwno の束縛（Jwno の低レベルキーボードフックは UI スレッドにあり、前面の窓より先に処理される。unverified on Windows）、
+  マウスのクリック、`Alt+Tab`／`Win` キー。sink の前面化が拒否されたら**成功扱い**（`[:notify :focus-none-refused]` を出し、`:reclaim-tries` に任せる。R-8 の回復は走らせない）。
+- **L1**: `observe-front` が生む `focus-changed` からは `:reclaim-focus` を予約しない（自分の `:focus` の観測が追いつく前に評価して試行を空費しない）。予約は `schedule-reobserve`（200ms 後）の観測、
+  および外から来た `focus-changed`（Jwno のフック経由）からだけ。**L3**: `[:notify :stray-returned id]` は同じ id につき、状態が変わるまで 1 回だけ。
+- **スパイクの確認項目（R4c-L4。すべて unverified on Windows として結果を記録する）**: sink が前面になる／打鍵が捨てられる／ムーブフック無しでも応答する／日本語 IME が有効でも変換ウィンドウが出ない／
+  `Alt+F4` で閉じない／Narrator の読み上げ／Jwno の束縛が sink の前面で効く／sink が前面のとき `focus-changed` に何が届くか（hwnd か nil か）。
