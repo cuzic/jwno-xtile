@@ -19,7 +19,7 @@
    [:command :shift-master]
    [:command :inc-master] [:command :dec-master]
    [:command :expand] [:command :shrink] [:command :next-layout]
-   [:command :close] [:command :refresh] [:command :toggle-float]
+   [:command :close] [:command :refresh] [:command :toggle-float] [:command :reclaim-focus]
    [:command :reassert-focus] [:command :reassert-focus 1 2] [:command :reassert-focus :w1]
    [:command :set-layout :tall] [:command :set-layout :wide]
    [:command :set-layout :full] [:command :set-layout :bogus]
@@ -210,8 +210,8 @@
   (def s (r :state))
   (def name (get event 1))
   (when (= (get event 0) :command)
-    # Q3: any command other than :reassert-focus / :goto leaves nothing pending
-    (when (and (not (index-of name [:reassert-focus :goto])) (s :pending-focus))
+    # Q3: any command other than :reassert-focus / :reclaim-focus / :goto leaves nothing pending
+    (when (and (not (index-of name [:reassert-focus :reclaim-focus :goto])) (s :pending-focus))
       (errorf "Q3 pending survived a new command after %q" event))
     (when (and (= name :goto) (s :pending-focus))
       (unless (= ((s :pending-focus) :target) (st/focused s))
@@ -289,9 +289,15 @@
     (unless (or (index-of id (vis-of old)) (not (index-of id old-all)) (= event [:command :refresh]))
       (errorf "H-e :hide %q was already hidden before %q" id event)))
   (each id shows
-    # H-b: only windows that were on another workspace and are visible now
-    (unless (and (index-of id (vis-of s)) (index-of id old-all) (not (index-of id (vis-of old))))
-      (errorf "H-b :show %q was not a hidden window that became visible after %q" id event)))
+    # H-b (ADR 0006 D-6): visible now, and not visible before (also a window that is new to the model)
+    # (:refresh is the exception: it shows every visible window again, to recover a stray)
+    (unless (and (index-of id (vis-of s))
+                 (or (= event [:command :refresh]) (not (index-of id (vis-of old)))))
+      (errorf "H-b :show %q was not a window that entered the visible workspace after %q" id event)))
+  # ... and every window that entered the visible workspace gets one
+  (each id (vis-of s)
+    (unless (or (index-of id (vis-of old)) (index-of id shows))
+      (errorf "H-b window %q entered the visible workspace without :show after %q" id event)))
   (unless (= (length hides) (length (distinct hides))) (errorf "H-d duplicate :hide after %q" event))
   (unless (= (length shows) (length (distinct shows))) (errorf "H-d duplicate :show after %q" event))
   (each id hides (when (index-of id shows) (errorf "H-d %q is both hidden and shown after %q" id event)))
@@ -299,9 +305,36 @@
     (when (and (= (first e) :place) (or (index-of (e 1) hides) (not (index-of (e 1) (vis-of s)))))
       (errorf "H-d :place for a window that is not visible after %q" event))))
 
+(defn check-stray [old r event]
+  "ADR 0006 D-7 / F12."
+  (def s (r :state))
+  (def fx (r :effects))
+  (def none? (find |(= (first $) :focus-none) fx))
+  (def focus? (find |(= (first $) :focus) fx))
+  (def marked? (find |(and (index-of (first $) [:focus :focus-none]) (= (last $) :reclaim)) fx))
+  (def kind (first event))
+  # F12d: never both; :focus-none only when the visible workspace is empty
+  (when (and none? focus?) (errorf "F12d :focus and :focus-none together after %q" event))
+  (when (and none? (not (empty? (vis-of s)))) (errorf "F12d :focus-none with a non-empty workspace after %q" event))
+  # F12b: nothing is stolen when the OS focus is not on a known window of a hidden workspace
+  (when (and marked? (not (u/stray? old))) (errorf "F12b a reclaim effect without a stray focus after %q" event))
+  (when (and none? (not (u/stray? s)) (not marked?)) (errorf "F12b :focus-none without a stray focus after %q" event))
+  # F12c: silent observations never produce :focus-none directly
+  (when (and none? (silent-kinds kind)) (errorf "F12c :focus-none from a silent event %q" event))
+  # F12a: a state-changing, non-silent transition that leaves the focus on a parked window corrects it
+  (when (and (u/stray? s) (not (silent-kinds kind)) (not= old s)
+             (not (index-of kind [:window-moved :command]))
+             (not (or focus? none?)))
+    (errorf "F12a the OS focus stays on a parked window after %q" event))
+  (when (and (= kind :command) (index-of (get event 1) [:goto :send :close :toggle-float])
+             (u/stray? s) (or (not= (old :current) (s :current)) (not= (vis-of old) (vis-of s)))
+             (not (or focus? none?)))
+    (errorf "F12a (command) the OS focus stays on a parked window after %q: fx=%q os=%q cur=%q tag=%q focused=%q ext=%q" event fx (s :os-focus) (s :current) (st/locate s (s :os-focus)) (st/focused s) (s :external-focus))))
+
 (defn check-effects [old r event]
   (def s (r :state))
   (check-visibility old r event)
+  (check-stray old r event)
   (check-dragged old r event)
   (check-reassert old r event)
   # Q5 (E2 extension): a :focus always targets a window of the CURRENT workspace,
@@ -368,7 +401,9 @@
              (not ((r :state) :external-focus)))
     (errorf "E10 external focus cleared by a non-observation: %q" event))
   # E11: while external, no :focus is derived unless the user asked for one
+  # (ADR 0006 D-7d: or the OS focus rests on a parked window -- that is not a window the user chose to be in)
   (when (and ((r :state) :external-focus)
+             (not (u/stray? (r :state)))
              (not (and (= (get event 0) :command)
                        (index-of (get event 1) [:focus-next :focus-prev :focus-master :goto]))))
     (when (find |(= (first $) :focus) (r :effects))
@@ -649,7 +684,6 @@
           :hide (put on-screen (fx 1) nil)
           :show (put on-screen (fx 1) true)))
       (each id (keys on-screen) (unless (index-of id new-all) (put on-screen id nil)))   # closed / gone
-      (each id (vis-of s2) (unless (index-of id old-all) (put on-screen id true)))     # appeared where we look
       (def want (sort (array ;(vis-of s2))))
       (def have (sort (array ;(keys on-screen))))
       (unless (deep= want have)

@@ -299,6 +299,55 @@
      [[:focus t]]]
     [s []]))
 
+# ---- ADR 0006 D-7: the OS focus must not stay on a parked window ---------------------------
+
+(defn stray-id
+  "The id the OS focus rests on, if it is a window we know on a workspace we are NOT looking at."
+  [s]
+  (def id (s :os-focus))
+  (when (and id (valid-id? id))
+    (def tag (st/locate s id))
+    (when (and tag (not= tag (s :current))) id)))
+
+(defn stray?  [s] (not (nil? (stray-id s))))
+
+(defn- stray-effect
+  "[:focus f] if the visible workspace has a window, [:focus-none] if it is empty. Never for a window we
+  do not manage (a dialog, the start menu, a fullscreen window we dropped): nothing is stolen."
+  [s]
+  (when (stray? s)
+    (if (empty? ((st/current-ws s) :ids))
+      [:focus-none]
+      (when-let [f (st/focused s)] [:focus f]))))
+
+(def- reclaim-limit 3)
+
+(defn- reclaim-focus
+  "Internal command (never bound). Evaluates the state NOW, so the order in which focus-changed and
+  window-closed arrived does not matter. At most `reclaim-limit` tries per window (then a notify)."
+  [s args]
+  (def os (stray-id s))
+  (cond
+    (not (empty? args)) [s []]
+    (nil? os) [(if (s :reclaim-tries) (d/without s :reclaim-tries) s) []]
+    (let [t (s :reclaim-tries)
+          n (if (and t (= (t :id) os)) (t :n) 0)]
+      (cond
+        (> n reclaim-limit) [s []]
+        (= n reclaim-limit) [(d/assoc s {:reclaim-tries {:id os :n (+ n 1)}}) [[:notify :reclaim-gave-up os]]]
+        (let [s1 (d/assoc s {:reclaim-tries {:id os :n (+ n 1)}})
+              own (= os (get-in s [:stray-own :id]))]
+          (if (and (= (s :stray-mode) :follow) (not own))
+            # the user chose a parked window: go to its workspace instead of pulling them back
+            (let [tag (st/locate s os)]
+              [(-> s1
+                   (d/assoc {:current tag :external-focus false})
+                   (st/update-ws tag |(ws/focus-id $ os)))
+               [[:goto tag]]])        # derive-effects adds hide/show/place and the :focus itself
+            (if-let [e (stray-effect s)]
+              [s1 [(tuple ;e :reclaim)]]
+              [s1 []])))))))
+
 (def- focus-moving? {:focus-next true :focus-prev true :focus-master true})
 
 (def command-args
@@ -308,10 +357,17 @@
     ;(mapcat |[$ :none]
               [;(keys ws-commands) ;(keys reorder-commands) :close :refresh])
     :goto :tag :send :tag :set-layout :layout :toggle-float :none
-    :reassert-focus :internal))   # :internal = issued by the shell, never bound to a key
+    :reassert-focus :internal :reclaim-focus :internal))   # :internal = issued by the shell, never bound to a key
+
+(defn- own-stray
+  "ADR 0006 D-7 (4d/4e): the window that keeps the OS focus after OUR goto/send is our own side
+  effect, not the user's choice: :follow must not react to it."
+  [s]
+  (if-let [id (s :os-focus)] (d/assoc s {:stray-own {:id id}}) s))
 
 (defn- goto-tag [s tag]
-  (-> s (d/assoc {:current tag :external-focus true}) (d/without :os-focus)))
+  # :os-focus stays: the OS front window really is still the old one (an observation, ADR 0005)
+  (-> s (d/assoc {:current tag :external-focus true}) own-stray))
 
 (defn- send-focused
   "xmonad's `shift`: move the focused window to another workspace; the view
@@ -321,7 +377,8 @@
   (if (and id (actionable? s) (valid-tag? s tag) (not= tag (s :current)))
     [(-> s
          (st/update-current |(ws/remove $ id))
-         (st/update-ws tag |(ws/insert $ id)))
+         (st/update-ws tag |(ws/insert $ id))
+         (d/assoc {:stray-own {:id id}}))
      [[:send id tag]]]
     [s []]))
 
@@ -355,6 +412,8 @@
 
     (= name :reassert-focus) (reassert-focus s args)
 
+    (= name :reclaim-focus) (reclaim-focus s args)
+
     (= name :send) (send-focused s (get args 0))
 
     (= name :close)
@@ -386,9 +445,10 @@
   (map |[:place $ (p $)] (st/tiled-ids s (st/current-ws s))))
 
 (defn- visibility-effects
-  "ADR 0006 D-1. hide: left the visible workspace for another one, or appeared on one we are not
-  looking at; show: came back from another workspace. Windows that merely vanished from the model
-  (closed, minimised, ghosts) get neither: they are not ours to hide."
+  "ADR 0006 D-1/D-6. hide: left the visible workspace for another one, or appeared on one we are not
+  looking at; show: every window that enters the visible workspace (also a new one: if it was parked
+  and forgotten, the adapter brings it back; otherwise :show is a no-op). Windows that merely vanished
+  from the model (closed, minimised, ghosts) get neither: they are not ours to hide."
   [old new]
   (def old-all (id-set (all-ids old)))
   (def old-vis (id-set ((st/current-ws old) :ids)))
@@ -401,7 +461,7 @@
       [:hide id]))
   (def shows
     (seq [id :in ((st/current-ws new) :ids)
-          :when (and (not (old-vis id)) (old-all id))]
+          :when (not (old-vis id))]     # ADR 0006 D-6: a window we forgot may still be parked
       [:show id]))
   [;hides ;shows])
 
@@ -422,7 +482,7 @@
 
 (def- effect-rank
   "goto/send/close first (in the order given), then hide, show, place, and focus last."
-  {:hide 1 :show 2 :place 3 :focus 4})
+  {:hide 1 :show 2 :place 3 :focus 4 :focus-none 4})
 
 (defn- order-effects
   [fx]
@@ -457,8 +517,9 @@
   (def kind (get event 0))
   (def args (tail event))
   # any command other than :reassert-focus is a new intent: forget the pending one
-  (def s (if (and (= kind :command) (not= (get args 0) :reassert-focus))
-           (d/without s0 :pending-focus)
+  (def internal? (and (= kind :command) (index-of (get args 0) [:reassert-focus :reclaim-focus])))
+  (def s (if (and (= kind :command) (not internal?))
+           (-> s0 (d/without :pending-focus) (d/without :stray-own) (d/without :reclaim-tries))
            s0))
   (cond
     (and (= kind :command) (= (get args 0) :refresh))
@@ -466,6 +527,7 @@
           f (st/focused s2)]
       {:state s2
        :effects (tuple ;(map |[:hide $] (hidden-ids s2))
+                       ;(map |[:show $] ((st/current-ws s2) :ids))
                        ;(all-places s2)
                        ;(if (and f (not (external? s2))) [[:focus f]] []))})
 
@@ -489,9 +551,25 @@
             :command (let [[s* fx] (command s (get args 0) (tail args))]
                        [s* fx false])
             [s [] false])]
-      (let [s3 (settle-pending s s2 kind args)]
+      (let [s3a (settle-pending s s2 kind args)
+            # the stray mark ends when the OS focus is observed somewhere else; the tries end with the stray
+            s3b (if (and (s3a :stray-own) (= kind :focus-changed) (not= (get args 0) (get-in s3a [:stray-own :id])))
+                  (d/without s3a :stray-own)
+                  s3a)
+            s3 (if (and (s3b :reclaim-tries) (not (stray? s3b)) (not= (get args 0) :reclaim-focus))
+                 (d/without s3b :reclaim-tries)
+                 s3b)
+            fx [;explicit ;(derive-effects s s3 silent?)]
+            # D-7: a state-changing, non-silent transition that leaves the OS focus on a parked window
+            # corrects it, unless a focus effect is already there (the reclaim command makes its own)
+            stray-fx (if (and (not silent?) (not= s s3) (not (= kind :command))
+                              (not (find |(index-of (first $) [:focus :focus-none]) fx)))
+                       (stray-effect s3))
+            stray-fx2 (if (and (not silent?) (= kind :command) (not internal?) (not= s s3)
+                               (not (find |(index-of (first $) [:focus :focus-none]) fx)))
+                        (stray-effect s3))]
         {:state s3
-         :effects (order-effects [;explicit ;(derive-effects s s3 silent?)])}))))
+         :effects (order-effects [;fx ;(if stray-fx [stray-fx] []) ;(if stray-fx2 [stray-fx2] [])])}))))
 
 (defn update [s event]
   (if (indexed? event) (update* s event) {:state s :effects []}))

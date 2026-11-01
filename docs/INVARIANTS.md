@@ -96,11 +96,28 @@
 - Q5（E2 の拡張）全ての `:focus` effect の対象は `:current` のワークスペースの窓（Core が暗黙の `:goto` を起こさない）。
 - K3（例外）`:reassert-focus` は束縛不可。keymap は `:internal` を含む未知の種類を拒否する（`case` の既定は拒否）。
 
-## Workspace visibility（ADR 0006。Draft、`test/update-test.janet` と `test/property-test.janet` で検査済み）
+## Workspace visibility（ADR 0006。`test/update-test.janet` と `test/property-test.janet` で検査済み）
 `vis(s)` = 可視ワークスペースの窓、`all(s)` = 全ワークスペースの窓。
 - H-a `[:hide id]` の対象は、新しい state で `all` にあり、`vis` に無い窓だけ（閉じた窓・ユーザーが最小化した窓・幽霊には出ない）。
-- H-b `[:show id]` の対象は、新しい `vis` にあり、旧の `all` にあって旧の `vis` に無かった窓だけ（新規の窓や snapshot で追加された窓は、すでに画面にあるので出ない）。
-- H-c ミラー: hide／show の effect と、可視ワークスペースに直接現れた窓だけを適用した「画面にある窓の集合」は、常に `vis(s)` と一致する。
+- H-b（ADR 0006 D-6 で改訂）`[:show id]` の対象は、新しい `vis` にあり、旧の `vis` に無かった窓すべて（新規の窓や snapshot で追加された窓も含む。Core が忘れた park 中の窓が戻ってくるため）。
+  逆に、可視に入った窓には必ず `:show` が出る。例外: `[:command :refresh]` は可視の窓すべてに `:show` を出し直す（取り残された窓の回復）。
+- H-c ミラー: hide／show の effect だけを適用した「画面にある窓の集合」は、常に `vis(s)` と一致する（D-6 で、可視に直接現れた窓を「すでに画面にある」と仮定する項は不要になった。Core 内では定義の言い換えに近く、
+  実質の検査はアダプタ側の P-1 が担う）。
 - H-d 同じ窓に `hide` と `show` を同時に出さない。重複しない。`vis` に無い窓に `:place` を出さない（`:show` されるフロートにも `:place` は出ない）。
 - H-e すでに隠れている窓に `hide` を出し直さない。ただし `:refresh` は、park を保つために、可視でないワークスペースの窓すべてに `hide` を出し直す。
 - 順序: `hide` → `show` → `place` → `focus`（`:goto`／`:send` が先頭）。
+
+## OS のフォーカスと park した窓（ADR 0006 D-7、改訂 4c〜4e）
+`stray(s)` = `:os-focus` が、Core が知っている窓で、可視でないワークスペースにある。`:os-focus` が無い／未知の窓は stray ではない。
+- F12a（活性）非 silent で状態が変わる遷移（`:command` では `:current` か `vis` が変わるもの）の結果、`stray` なら、`[:focus id]` か `[:focus-none]` のどちらかが effect に含まれる。
+  `:reclaim-focus` は、試行が上限未満なら、`stray` のときちょうど 1 つ（印付き `:reclaim`）を出す。
+- F12b（奪わない）`:os-focus` が無い／未知の窓／可視の窓なら、印付き effect も `[:focus-none]` も出ない。
+- F12c silent な event（`focus-changed`、`windows-observed`、`desktop-changed`）の直接の結果に `[:focus-none]` は含まれない（回復は `:reclaim-focus` が担う）。
+- F12d `[:focus-none]` と `[:focus id]` は同じ effect 列に同時に出ない。`[:focus-none]` は可視ワークスペースが空のときだけ。
+- F12e（収束・試行）`:reclaim-focus` が effect を出すのは、同じ窓について連続 3 回まで。4 回目に `[:notify :reclaim-gave-up id]` を 1 度出し、以降は何も出さない。
+  `:reclaim-tries` は `{:id :n}`。`:os-focus` が可視または管理外・nil になる、`:reassert-focus`／`:reclaim-focus` 以外のコマンド、窓の消滅でリセット。
+- 改訂: **E11** は、`stray` のときの `:focus` を例外とする。**Q3** は `:reclaim-focus` を `:reassert-focus` と同じく例外とする（`:pending-focus` を消さない）。
+  **E6** は、`stray-focus` を足すのは「状態が変わった」遷移に限る。`goto` は `:os-focus` を消さない（観測は事実）。`:stray-own {:id}` は自分の `goto`／`send` で前面に残った窓の印で、
+  `:follow`（`:stray-mode`）はこの印のある窓には反応しない。印は、その id 以外の `focus-changed` または任意のコマンドで下りる。
+- P-1（アダプタ側。タイマーと `:reclaim-focus` を流し切った後に成り立つ）Core の `vis(s)` の窓は画面上にある（`parked` に無い）。可視でないワークスペースの窓は park されているか最小化されている。
+  前面ロックで拒否されたとき（3 回で諦める）は正当に破れる。フェイク OS のプロパティテストで検査する（未実装）。

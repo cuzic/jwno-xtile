@@ -21,13 +21,14 @@
 
 (deftest "first window fills the screen and takes focus"
   (def [s fx] (run (fresh) [:window-opened :a]))
-  (is= [[:place :a screen] [:focus :a]] fx)
+  (is= [[:show :a] [:place :a screen] [:focus :a]] fx)
   (is= [:a] (ids s)))
 
 (deftest "second window becomes master; only changed rects are placed"
   (def [s fx] (run (fresh) [:window-opened :a] [:window-opened :b]))
   (is= [:b :a] (ids s))
-  (is= [[:place :b (g/rect 0 0 500 600)]
+  (is= [[:show :b]
+        [:place :b (g/rect 0 0 500 600)]
         [:place :a (g/rect 500 0 500 600)]
         [:focus :b]]
        fx))
@@ -161,7 +162,8 @@
 (deftest "refresh re-emits every placement and the focus"
   (def [s _] (run (fresh) [:window-opened :a] [:window-opened :b]))
   (def r (u/update s [:command :refresh]))
-  (is= [[:place :b (g/rect 0 0 500 600)]
+  (is= [[:show :b] [:show :a]
+        [:place :b (g/rect 0 0 500 600)]
         [:place :a (g/rect 500 0 500 600)]
         [:focus :b]]
        (r :effects)))
@@ -192,7 +194,7 @@
   (def [s _] (run (fresh) [:window-opened :a] [:focus-changed nil]))
   (def r (u/update s [:command :refresh]))
   (is ((r :state) :external-focus))
-  (is= [[:place :a screen]] (r :effects))
+  (is= [[:show :a] [:place :a screen]] (r :effects))
   (is= [] ((u/update (r :state) [:command :close]) :effects)))
 
 (deftest "goto marks focus external until the OS confirms it"
@@ -462,13 +464,92 @@
   (is= [:z] (tuple ;(kinds (r :effects) :hide)))
   (is= [] (tuple ;(kinds (r :effects) :show))))
 
-(deftest "a new window on the visible workspace is not 'shown' (it is already there)"
+(deftest "ADR 0006 D-6: a new window on the visible workspace IS 'shown' (it may be a forgotten parked one)"
   (def [s _] (run (fresh) [:window-opened :a]))
   (def r (u/update s [:window-opened :b]))
-  (is= [] (tuple ;(kinds (r :effects) :show)))
+  (is= [:b] (tuple ;(kinds (r :effects) :show)))
   (is= [] (tuple ;(kinds (r :effects) :hide))))
 
 (deftest "refresh re-asserts every hidden window as well"
   (def [s _] (run (fresh) [:window-opened :a] [:window-opened :c "2"] [:window-opened :d "3"]))
   (def r (u/update s [:command :refresh]))
   (is= [:c :d] (tuple ;(sort (array ;(kinds (r :effects) :hide))))))
+
+# ---- ADR 0006 D-7: the OS focus must not rest on a parked window ----------------------------
+
+(deftest "D-7: goto an empty workspace keeps :os-focus and asks for no focus (focus-none)"
+  (def [s _] (run (fresh) [:window-opened :a] [:focus-changed :a]))
+  (def r (u/update s [:command :goto "2"]))
+  (is= :a ((r :state) :os-focus))                                  # still observed: the front window really is :a
+  (is= [[:goto "2"] [:hide :a] [:focus-none]] (r :effects)))
+
+(deftest "D-7: the last window sent away leaves no focus on it"
+  (def [s _] (run (fresh) [:window-opened :a] [:focus-changed :a]))
+  (def r (u/update s [:command :send "2"]))
+  (is= [[:send :a "2"] [:hide :a] [:focus-none]] (r :effects)))
+
+(deftest "D-7: a window of the visible workspace is focused instead when there is one"
+  (def [s _] (run (fresh) [:window-opened :a "2"] [:window-opened :b] [:focus-changed :b]))
+  # the OS now rests on a parked window of workspace 2 (e.g. the user picked it in the taskbar)
+  (def s2 ((u/update s [:focus-changed :a]) :state))
+  (def r (u/update s2 [:command :reclaim-focus]))
+  (is= [[:focus :b :reclaim]] (r :effects)))
+
+(deftest "D-7/F12b: an unknown window (a dialog, the start menu) is never taken from"
+  (def [s _] (run (fresh) [:window-opened :a] [:focus-changed :a]))
+  (def s2 ((u/update s [:focus-changed :dialog]) :state))
+  (is= [] ((u/update s2 [:command :reclaim-focus]) :effects))
+  (def [s3 _] (run (fresh) [:window-opened :a "2"] [:focus-changed nil]))
+  (is= [] ((u/update s3 [:command :reclaim-focus]) :effects)))
+
+(deftest "D-7: closing the last window, in either order of arrival, ends with focus-none"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :p "2"] [:focus-changed :a]))
+  # order 1: the OS hands the focus to the parked :p first, then :a is reported closed
+  (def o1 (-> s (u/update [:focus-changed :p]) (get :state) (u/update [:window-closed :a])))
+  (is= [[:focus-none]] (o1 :effects))
+  # order 2: closed first, the focus change arrives afterwards (silent): the reclaim command settles it
+  (def o2a ((u/update s [:window-closed :a]) :state))
+  (def o2b ((u/update o2a [:focus-changed :p]) :state))
+  (is= [] ((u/update o2a [:focus-changed :p]) :effects))
+  (is= [[:focus-none :reclaim]] ((u/update o2b [:command :reclaim-focus]) :effects)))
+
+(deftest "D-7: the reclaim command tries 3 times, then gives up with a notify, and the count is per window"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :p "2"] [:window-opened :q "2"] [:focus-changed :a]))
+  (var st ((u/update s [:focus-changed :p]) :state))
+  (def fxs @[])
+  (for _ 0 5
+    (def r (u/update st [:command :reclaim-focus]))
+    (array/push fxs (r :effects))
+    (set st (r :state)))
+  (is= [[[:focus :a :reclaim]] [[:focus :a :reclaim]] [[:focus :a :reclaim]] [[:notify :reclaim-gave-up :p]] []] (tuple ;fxs))
+  # a different parked window starts from zero
+  (def st2 ((u/update st [:focus-changed :q]) :state))
+  (is= [[:focus :a :reclaim]] ((u/update st2 [:command :reclaim-focus]) :effects))
+  # the tries end once the focus is back on the visible workspace
+  (def st3 ((u/update st [:focus-changed :a]) :state))
+  (is (nil? (st3 :reclaim-tries))))
+
+(deftest "D-7: the reclaim command keeps the pending :goto focus (it is not a new intent)"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :b "2"] [:focus-changed :a]))
+  (def r (u/update s [:command :goto "2"]))
+  (is (get (r :state) :pending-focus))
+  (is (get ((u/update (r :state) [:command :reclaim-focus]) :state) :pending-focus)))
+
+(deftest "D-7e: :follow goes to the workspace of a parked window the user chose, but not after our own goto"
+  (def f (st/make {:x 0 :y 0 :w 1000 :h 600} ["1" "2" "3"] [] :follow))
+  (def [s _] (run f [:window-opened :a] [:window-opened :p "2"] [:focus-changed :a]))
+  # the user picks :p in the taskbar
+  (def chosen ((u/update s [:focus-changed :p]) :state))
+  (def r (u/update chosen [:command :reclaim-focus]))
+  (is= "2" ((r :state) :current))
+  (is= [[:goto "2"] [:hide :a] [:show :p] [:place :p screen] [:focus :p]] (r :effects))
+  # our own goto 3 (empty) leaves :a in front; following it would undo the goto
+  (def g ((u/update s [:command :goto "3"]) :state))
+  (is= [[:focus-none :reclaim]] ((u/update g [:command :reclaim-focus]) :effects))
+  (is= "3" (((u/update g [:command :reclaim-focus]) :state) :current)))
+
+(deftest "D-6: a window the core forgot and sees again gets :show (it may still be parked)"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :f "2"]))
+  (def gone ((u/update s [:windows-observed []]) :state))              # forgotten
+  (def r (u/update gone [:windows-observed [[:f nil]]]))              # seen again, lands on the visible workspace
+  (is (find |(= $ [:show :f]) (r :effects))))

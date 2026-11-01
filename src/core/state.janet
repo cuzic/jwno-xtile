@@ -12,18 +12,22 @@
 (import ./layout)
 (import ./classify)
 
-(defn make [screen tags &opt rules]
+(defn make [screen tags &opt rules stray-mode]
   (default rules [])
+  (assert (index-of stray-mode [nil :return :follow]) "stray-mode must be :return or :follow")
   (assert (and (indexed? rules) (all classify/valid-rule? rules))
           "rules must be a list of valid classify rules")
   (assert (and (not (empty? tags)) (all string? tags))
           "workspace tags must be a non-empty list of strings")
+  (def base
   {:screen screen
    :tags (tuple ;tags)
    :rules (tuple ;rules)
    :floating {}
    :current (first tags)
    :workspaces (struct ;(mapcat |[$ (ws/make $)] tags))})
+  # ADR 0006 D-7e: what to do when the OS focus rests on a parked window (default :return)
+  (if (= stray-mode :follow) (d/assoc base {:stray-mode :follow}) base))
 
 (defn ws-of [s tag] ((s :workspaces) tag))
 
