@@ -82,7 +82,7 @@
   (def [s _] (run (fresh) [:window-opened :a "2"]))
   (def r (u/update s [:command :goto "2"]))
   (is= "2" ((r :state) :current))
-  (is= [[:goto "2"] [:place :a screen] [:focus :a]] (r :effects)))
+  (is= [[:goto "2"] [:show :a] [:place :a screen] [:focus :a]] (r :effects)))
 
 (deftest "goto the current or an unknown workspace is a no-op"
   (def s (fresh))
@@ -93,7 +93,7 @@
   (def [s _] (run (fresh) [:window-opened :a "2"]))
   (def r (u/update s [:desktop-changed "2"]))
   (is= "2" ((r :state) :current))
-  (is= [[:place :a screen]] (r :effects)))
+  (is= [[:show :a] [:place :a screen]] (r :effects)))
 
 (deftest "send moves the focused window away and re-tiles"
   (def [s _] (run (fresh) [:window-opened :a] [:window-opened :b]
@@ -101,7 +101,7 @@
   (def r (u/update s [:command :send "2"]))
   (is= [:a] (ids (r :state)))
   (is= "1" ((r :state) :current))
-  (is= [[:send :b "2"] [:place :a screen] [:focus :a]] (r :effects)))
+  (is= [[:send :b "2"] [:hide :b] [:place :a screen] [:focus :a]] (r :effects)))
 
 (deftest "send with no focused window does nothing"
   (def s (fresh))
@@ -199,7 +199,7 @@
   (def [s _] (run (fresh) [:window-opened :a "2"]))
   (def r (u/update s [:command :goto "2"]))
   (is ((r :state) :external-focus))
-  (is= [[:goto "2"] [:place :a screen] [:focus :a]] (r :effects))
+  (is= [[:goto "2"] [:show :a] [:place :a screen] [:focus :a]] (r :effects))
   (def r2 (u/update (r :state) [:focus-changed :a]))
   (is (not ((r2 :state) :external-focus))))
 
@@ -413,3 +413,62 @@
   (def r (u/update s [:window-dragged :a {:x 1 :y 1 :w 10 :h 10}]))
   (is= (s :os-focus) ((r :state) :os-focus))
   (is= (s :external-focus) ((r :state) :external-focus)))
+
+# ---- ADR 0006: [:hide id] / [:show id] ---------------------------------
+
+(defn kinds [fx kind] (map |($ 1) (filter |(= (first $) kind) fx)))
+
+(deftest "goto hides what leaves and shows what enters; hide comes first, focus last"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :b]
+                  [:window-opened :c "2"] [:window-opened :d "2"]))
+  (def r (u/update s [:command :goto "2"]))
+  (def fx (tuple ;(r :effects)))
+  (is= [:goto "2"] (first fx))
+  (is= [:b :a] (tuple ;(kinds fx :hide)))                       # the old workspace, in stack order
+  (is= [:d :c] (tuple ;(kinds fx :show)))
+  (defn pos [kind] (find-index |(= (first $) kind) fx))
+  (is (< (pos :hide) (pos :show)))
+  (is (< (pos :show) (pos :place)))
+  (is= :focus (first (last fx)))
+  # and back
+  (def r2 (u/update (r :state) [:command :goto "1"]))
+  (is= [:d :c] (tuple ;(kinds (r2 :effects) :hide)))
+  (is= [:b :a] (tuple ;(kinds (r2 :effects) :show))))
+
+(deftest "a floating window is shown without a :place"
+  (def rules [{:match {:class "#32770"} :action :float}])
+  (def s0 (st/make screen ["1" "2" "3"] rules))
+  (def [s _] (run s0 [:window-opened :t "2"] [:window-seen :dlg {:class "#32770" :visible? true} "2"]))
+  (def r (u/update s [:command :goto "2"]))
+  (is (find |(= $ [:show :dlg]) (r :effects)))
+  (is (not (find |(and (= (first $) :place) (= (get $ 1) :dlg)) (r :effects)))))
+
+(deftest "send hides the window that leaves; the others re-tile; it is never placed"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :b] [:focus-changed :b]))
+  (def r (u/update s [:command :send "2"]))
+  (is= [:b] (tuple ;(kinds (r :effects) :hide)))
+  (is= [] (tuple ;(kinds (r :effects) :show)))
+  (is (not (find |(and (= (first $) :place) (= (get $ 1) :b)) (r :effects)))))
+
+(deftest "windows that merely disappear are never hidden: closed, minimised, or ghosts"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :b] [:window-opened :c]))
+  (is= [] (tuple ;(kinds ((u/update s [:window-closed :b]) :effects) :hide)))
+  (is= [] (tuple ;(kinds ((u/update s [:window-seen :b {:minimized? true}]) :effects) :hide)))
+  (is= [] (tuple ;(kinds ((u/update s [:windows-observed [[:a nil] [:c nil]]]) :effects) :hide))))
+
+(deftest "a window that appears on a workspace we are not looking at is on screen, so it is hidden at once"
+  (def [s _] (run (fresh) [:window-opened :a]))
+  (def r (u/update s [:window-opened :z "3"]))
+  (is= [:z] (tuple ;(kinds (r :effects) :hide)))
+  (is= [] (tuple ;(kinds (r :effects) :show))))
+
+(deftest "a new window on the visible workspace is not 'shown' (it is already there)"
+  (def [s _] (run (fresh) [:window-opened :a]))
+  (def r (u/update s [:window-opened :b]))
+  (is= [] (tuple ;(kinds (r :effects) :show)))
+  (is= [] (tuple ;(kinds (r :effects) :hide))))
+
+(deftest "refresh re-asserts every hidden window as well"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :c "2"] [:window-opened :d "3"]))
+  (def r (u/update s [:command :refresh]))
+  (is= [:c :d] (tuple ;(sort (array ;(kinds (r :effects) :hide))))))

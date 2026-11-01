@@ -271,8 +271,36 @@
         (when (find |(and (= (first $) :place) (= (get $ 1) id)) (r :effects))
           (errorf "D4 the dragged window was placed again: %q" event))))))
 
+(defn- vis-of [s] ((st/current-ws s) :ids))
+
+(defn check-visibility [old r event]
+  (def s (r :state))
+  (def new-all (stack-ids s))
+  (def old-all (stack-ids old))
+  (def hides (map |($ 1) (filter |(= (first $) :hide) (r :effects))))
+  (def shows (map |($ 1) (filter |(= (first $) :show) (r :effects))))
+  (each id hides
+    # H-a: only windows the model still has, and not on the workspace we are looking at
+    (unless (and (index-of id new-all) (not (index-of id (vis-of s))))
+      (errorf "H-a :hide %q is not on a hidden workspace after %q" id event)))
+  (each id hides
+    # H-e: not again for a window that was already hidden (that is noise, and re-parks a window needlessly)
+    (unless (or (index-of id (vis-of old)) (not (index-of id old-all)))
+      (errorf "H-e :hide %q was already hidden before %q" id event)))
+  (each id shows
+    # H-b: only windows that were on another workspace and are visible now
+    (unless (and (index-of id (vis-of s)) (index-of id old-all) (not (index-of id (vis-of old))))
+      (errorf "H-b :show %q was not a hidden window that became visible after %q" id event)))
+  (unless (= (length hides) (length (distinct hides))) (errorf "H-d duplicate :hide after %q" event))
+  (unless (= (length shows) (length (distinct shows))) (errorf "H-d duplicate :show after %q" event))
+  (each id hides (when (index-of id shows) (errorf "H-d %q is both hidden and shown after %q" id event)))
+  (each e (r :effects)
+    (when (and (= (first e) :place) (or (index-of (e 1) hides) (not (index-of (e 1) (vis-of s)))))
+      (errorf "H-d :place for a window that is not visible after %q" event))))
+
 (defn check-effects [old r event]
   (def s (r :state))
+  (check-visibility old r event)
   (check-dragged old r event)
   (check-reassert old r event)
   # Q5 (E2 extension): a :focus always targets a window of the CURRENT workspace,
@@ -603,3 +631,36 @@
       (check-invariants (r :state) [:window-dragged id])
       # a second identical drag changes nothing
       (is= (r :state) ((u/update (r :state) [:window-dragged id (g/rect 7 9 33 21)]) :state)))))
+
+(deftest "H-c: the set of windows on screen, rebuilt from hide/show effects alone, is always the visible workspace"
+  (for seed 0 200
+    (def rng (math/rng (+ 50000 seed)))
+    (var s (new-state rng))
+    (def on-screen @{})                     # what a shell that obeys the effects would show
+    (for step 0 150
+      (def e (random-event rng))
+      (def r (u/update s e))
+      (def s2 (r :state))
+      (def old-all (stack-ids s))
+      (def new-all (stack-ids s2))
+      (each fx (r :effects)
+        (case (first fx)
+          :hide (put on-screen (fx 1) nil)
+          :show (put on-screen (fx 1) true)))
+      (each id (keys on-screen) (unless (index-of id new-all) (put on-screen id nil)))   # closed / gone
+      (each id (vis-of s2) (unless (index-of id old-all) (put on-screen id true)))     # appeared where we look
+      (def want (sort (array ;(vis-of s2))))
+      (def have (sort (array ;(keys on-screen))))
+      (unless (deep= want have)
+        (errorf "H-c on-screen %q != visible %q after %q (seed %d step %d)" have want e seed step))
+      (set s s2))))
+
+(deftest "refresh also re-asserts every hidden window"
+  (for seed 0 100
+    (def rng (math/rng (+ 51000 seed)))
+    (var s (new-state rng))
+    (for _ 0 60 (set s ((u/update s (random-event rng)) :state)))
+    (def r (u/update s [:command :refresh]))
+    (def hidden (sort (array ;(filter |(not (index-of $ (vis-of s))) (stack-ids s)))))
+    (def got (sort (array ;(map |($ 1) (filter |(= (first $) :hide) (r :effects))))))
+    (is= hidden got)))

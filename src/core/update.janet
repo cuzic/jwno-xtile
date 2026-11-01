@@ -12,6 +12,7 @@
 # Effects (output data, executed by the shell):
 #   [:place id rect]  [:focus id]  [:close id]
 #   [:goto tag]       [:send id tag]
+#   [:hide id] [:show id]   (ADR 0006: derived from which workspace is visible)
 #
 # :place / :focus effects are derived by diffing old and new state, so the
 # transitions below never mention them.
@@ -370,15 +371,45 @@
 
 # ---- effects -----------------------------------------------------------
 
+(defn- all-ids [s] (mapcat |((st/ws-of s $) :ids) (s :tags)))
+
+(defn- id-set [ids] (from-pairs (map |[$ true] ids)))
+
+(defn- hidden-ids
+  "Windows on workspaces we are not looking at."
+  [s]
+  (def vis (id-set ((st/current-ws s) :ids)))
+  (filter |(not (vis $)) (all-ids s)))
+
 (defn- all-places [s]
   (def p (st/placements s))
   (map |[:place $ (p $)] (st/tiled-ids s (st/current-ws s))))
+
+(defn- visibility-effects
+  "ADR 0006 D-1. hide: left the visible workspace for another one, or appeared on one we are not
+  looking at; show: came back from another workspace. Windows that merely vanished from the model
+  (closed, minimised, ghosts) get neither: they are not ours to hide."
+  [old new]
+  (def old-all (id-set (all-ids old)))
+  (def old-vis (id-set ((st/current-ws old) :ids)))
+  (def new-vis (id-set ((st/current-ws new) :ids)))
+  (def hides
+    (seq [tag :in (new :tags)
+          :let [w (st/ws-of new tag)]
+          id :in (w :ids)
+          :when (and (not (new-vis id)) (or (old-vis id) (not (old-all id))))]
+      [:hide id]))
+  (def shows
+    (seq [id :in ((st/current-ws new) :ids)
+          :when (and (not (old-vis id)) (old-all id))]
+      [:show id]))
+  [;hides ;shows])
 
 (defn- derive-effects [old new silent?]
   (def old-p (st/placements old))
   (def new-w (st/current-ws new))
   (def new-p (st/placements new))
-  (def effects @[])
+  (def effects @[;(visibility-effects old new)])
   (each id (st/tiled-ids new new-w)
     (unless (= (old-p id) (new-p id))
       (array/push effects [:place id (new-p id)])))
@@ -389,12 +420,17 @@
     (array/push effects [:focus f]))
   effects)
 
+(def- effect-rank
+  "goto/send/close first (in the order given), then hide, show, place, and focus last."
+  {:hide 1 :show 2 :place 3 :focus 4})
+
 (defn- order-effects
-  "Everything else first, :focus last (place windows, then focus); no dupes."
   [fx]
   (def fx (distinct fx))
-  (tuple ;(filter |(not= (first $) :focus) fx)
-         ;(filter |(= (first $) :focus) fx)))
+  (tuple ;(seq [r :in [0 1 2 3 4]
+                e :in fx
+                :when (= r (get effect-rank (first e) 0))]
+            e)))
 
 # ---- entry point -------------------------------------------------------
 
@@ -429,7 +465,8 @@
     (let [s2 (d/without s :misfit)
           f (st/focused s2)]
       {:state s2
-       :effects (tuple ;(all-places s2)
+       :effects (tuple ;(map |[:hide $] (hidden-ids s2))
+                       ;(all-places s2)
                        ;(if (and f (not (external? s2))) [[:focus f]] []))})
 
     (= kind :window-moved)
