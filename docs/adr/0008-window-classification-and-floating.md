@@ -144,3 +144,17 @@ ADR 0007 §3 で「管理対象ウィンドウの定義」が未決だった。�
 
 ## 実装上の注意
 - facts 付き snapshot で、既知かつ hidden の id は `seen` に入る。幽霊削除とは別に、明示的に除去する。
+
+## 追記（2026-10-31）: `[:window-dragged id rect]` — ユーザーのドラッグ／リサイズはフロート化
+xmonad の `mouseMoveWindow`/`mouseResizeWindow` は、ドラッグ／リサイズした窓を `float` する。Shell（ADR 0010 D9）がドラッグ／リサイズの**終了**を観測したとき（および
+最大化されたタイルをポーリングで見つけたとき）、`[:window-dragged id rect]` を流す。`rect` はそのときの**見える枠**（`:place` と同じ座標系）。
+
+Core は、`id` が**可視ワークスペースの既知のタイル窓**で、かつ **`rect` がモデルの配置（`placements`）と違うときだけ**、`:floating` に入れる（`:toggle-float` と同じ遷移。
+対象が明示された観測なので actionable を要さない）。`rect` が配置と同じ（タイトルバーを動かさずにクリックしただけ）なら何もせず、`:misfit` を消すだけ（`window-moved` の
+一致と同じ）。位置は動かさず（ユーザーが置いた所にとどまる）、残りのタイルを詰め直す。次の場合は何もしない（冪等。E9）: 不正な id・不正な `rect`、未知の窓
+（`:ignore` と分類された窓も state に無いのでここに含まれる）、不可視ワークスペースの窓、すでにフロートの窓。`:pending-focus` とフォーカスには触れない
+（silent な観測ではないが、フォーカスは変わらない）。
+
+不変条件: D1 `window-dragged` は、配置と違う `rect` のタイル窓をフロートにし、スタックの順序・フォーカス・`:os-focus`・`:external-focus` を変えない／D2 配置と同じ `rect` の
+タイル窓は state の `:floating` を変えない／D3 二度目は state も effects も変えない（E6）／D4 effects に `:place` を出すのは残りのタイルだけで、ドラッグされた窓には出ない（F2）／
+D5 `:external-focus` を下ろさない（E10。`non-focus-observation` に加える）。
