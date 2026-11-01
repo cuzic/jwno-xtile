@@ -2,7 +2,7 @@
 # a re-entrancy-free event queue, and executes effects through a `ctx` port.
 # It imports neither Jwno nor jw32; everything that touches the OS is a
 # function in `ctx`:
-#   effects:   :place (id rect) :focus (id) :close (id) :goto (tag) :send (id tag)
+#   effects:   :place (id rect) :focus (id) :close (id) :goto (tag) :send (id tag) :hide (id) :show (id)
 #   observe:   :foreground () -> id|nil   (root window, NOT owner-normalised)
 #              :foreground-is? (id) -> bool   (exact match)
 #              :current-desktop () -> tag|nil
@@ -101,6 +101,8 @@
     :place (first (call rt :place (fx 1) (fx 2)))
     :focus (first (call rt :focus (fx 1)))
     :goto (first (call rt :goto (fx 1)))
+    :hide (first (call rt :hide (fx 1)))        # ADR 0006: leave the visible workspace
+    :show (first (call rt :show (fx 1)))        # ... and come back
     :send (first (call rt :send (fx 1) (fx 2)))
     :close
     (let [[ok same] (call rt :foreground-is? (fx 1))]
