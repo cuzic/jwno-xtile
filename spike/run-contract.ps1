@@ -126,17 +126,25 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-6" ($(if ($moved.Count -eq 0) { "PASS" } else { "FAIL" })) "Jwno's :retile does not move windows pinned with :swp-flags" (($moved -join " | ") + " [client: $r]")
 
   # a manual move survives Jwno's retile, and the core's :refresh brings it back
+  $h1 = $N1.MainWindowHandle
   $h2 = $N2.MainWindowHandle
   $want = (Win $i2).rect
   if (-not $want) { Check "CT-6x" "FAIL" "the window used for the move/refresh checks is tiled" ((Win $i2) | ConvertTo-Json -Compress) }
+  # The adapter now also puts back windows that moved without a drag (D9), within the 2s poll -- but it
+  # never compares while a mouse button is down. Hold one (on the taskbar's empty part) so the poll cannot
+  # interleave, and this check measures only what Jwno's own retile does.
+  [void][C]::SetCursorPos(1010, 757); Start-Sleep -Milliseconds 200; MouseDown
   [void][C]::SetWindowPos($h2, [IntPtr]::Zero, 30, 30, 400, 300, 0x0004)
-  Start-Sleep 1; [void](Cmd "retile"); Start-Sleep 2
+  Start-Sleep -Milliseconds 400; [void](Cmd "retile"); Start-Sleep -Milliseconds 800
   $f = Frame $h2
-  Check "CT-6b" ($(if ($f[2] -le 420 -and $f[3] -le 320) { "PASS" } else { "FAIL" })) "after a manual move, Jwno's retile leaves the window where the user put it" ("frame=" + ($f -join ","))
-  [void](Cmd ":xtile :refresh"); Start-Sleep 2
-  $f = Frame $h2
-  $d = 0; for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) }
-  Check "CT-6c" ($(if ($want -and $d -le 1) { "PASS" } else { "FAIL" })) "the core's :refresh puts it back" ("frame=" + ($f -join ",") + " want=" + ($want -join ","))
+  MouseUp
+  Check "CT-6b" ($(if ($f[2] -le 420 -and $f[3] -le 320) { "PASS" } else { "FAIL" })) "after a programmatic move, Jwno's retile leaves the window where it was put (the poll is held off by a pressed button)" ("frame=" + ($f -join ","))
+  # the button is up now: the next poll's placement comparison puts the window back (ADR 0010 D9)
+  $backed = WaitFor {
+    $f = Frame $h2; $d = 0
+    if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
+    $d -le 1 } 8
+  Check "CT-6c" ($(if ($want -and $backed) { "PASS" } else { "FAIL" })) "with no button down, the poll puts a window that was moved programmatically back at the core's rect" ("frame=" + ((Frame $h2) -join ",") + " want=" + ($want -join ","))
 
   # ---- maximize: the user's own action floats the tile (ADR 0010 D9 N3); it is not shrunk back ----
   [void][C]::ShowWindow($h2, 3)
