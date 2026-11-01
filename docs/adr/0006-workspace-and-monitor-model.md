@@ -109,3 +109,33 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 - `:sw-hide`（opt-in）は未実装のまま。デスクトップごとの state の入れ替えは需要が出るまで見送り。
 - **実機の記録（2026-11-01、Windows 11。空の専用デスクトップだけで試した）**: 新しく作ったデスクトップで、park・復帰・終了時の復元・異常終了からの回復（Notepad）が通った（`docs/spike/2026-11-01-real-machine.md`）。
   **未検証**: 以前からある窓のあるデスクトップへの切替、デスクトップの削除、park した窓を持ったままの仮想デスクトップ往復、Chromium／UWP の窓、副モニタ、全画面。新しい仮想デスクトップへの切替で Jwno の `desktop-name-changed` が届かないことがあり、その間の追従はポーリング（2 秒）任せで、追従前に focus を出すと元のデスクトップへ引き戻される恐れがある（Opus M2、未対応）。
+
+## 改訂 4（2026-11-01。Opus の実装後レビュー H2・H3 への対応。**Proposed**: レビューと実装の後に Accepted へ）
+
+### D-6 `:show` は「可視に新しく入った窓すべて」に出す（H2。D-1 の `show` の定義と H-b を改める）
+- 問題: park 方式では「新規の窓や snapshot で追加された窓は、すでに画面にある」が偽になりうる。Core から忘れられた窓（仮想デスクトップの往復、park 中の窓を最小化して戻す、
+  `enumerate` が一度飛ばした）は (-32000) に残ったまま、再び Core に現れる。このとき `:show` が出ないので、タイルは `:place` で戻るが、**フロートは画面外に取り残される**。
+- 決定: `show = { id ∈ vis(new) : id ∉ vis(old) }`。`id ∈ all(old)` の条件を外す。新規の窓も `:show` を受ける。
+  アダプタの `:show` は `parked` に無い窓には何もしないので、本当に新しい窓には無害（ログのみ）。
+- 不変条件 **H-b（改）**: `[:show id]` の対象は、新しい `vis` にあり、旧の `vis` に無かった窓すべて。**H-c（ミラー）**: 「画面にある窓の集合」は、`:hide`／`:show` だけで `vis(s)` に一致する
+  （可視ワークスペースへ直接現れた窓を「すでに画面にある」と仮定する項は不要になる。ミラーの仮定が減るので、H2 の食い違いを検出できる）。
+- 影響: 新しい窓が開くたびに `[:show id]` が 1 つ増える（`:place` の前、`:hide` の後）。`runtime` の effect の実行順は変えない。`effect-rank` は変更なし。
+- 検討して採らなかった案: アダプタが `windows-observed` の後に `parked` と Core の state を突き合わせて unpark する案。アダプタが Core の state を読むので、ADR 0001（判断は Core）と合わない。
+
+### D-7 可視ワークスペースが空になったら、OS のフォーカスを管理窓から外す（H3。新しい effect `[:focus-none]`）
+- 問題: 空のワークスペースへ `goto` すると、画面には何も無いが、前面の窓は park された（画面外の）窓のまま。打鍵は見えない窓に入る（ターミナルならコマンドが実行される）。
+  最後の窓を `send` したとき、最後の窓を閉じたとき（Windows は Z 順の次の窓＝park 済みの窓へフォーカスを渡しうる）も同じ。xmonad では、空のワークスペースのフォーカスはルート窓で、打鍵はどこにも入らない。
+- 決定: 新しい effect **`[:focus-none]`**。Core は、遷移の結果 `vis(new)` が空で、`silent?` でなく、かつ次のどちらかのとき出す。
+  1. `:current` が変わった（`goto`、`send` で現在のワークスペースが変わる場合ではなく `goto-tag`／`shift` 系）。
+  2. 旧の state が `external?` でなく、旧の `vis` が空でなかった（最後の窓が閉じた・送り出された）。
+  ユーザーが管理外の窓（スタートメニューなど）を使っている間に、背景で管理窓が閉じても、フォーカスを奪わない（旧が external なら 2 は出ない）。
+- 不変条件 **F12**: `[:focus-none]` と `[:focus id]` は同じ effect 列に同時に出ない。`[:focus-none]` は `vis(new)` が空のときだけ出る。遷移が無い（state が変わらない）ときは出ない。
+  順序は `hide` → `show` → `place` → `focus`／`focus-none`（最後）。
+- アダプタ: ポート `:focus-none` は Jwno の `(:set-focus-to-desktop wm)`（win.janet:3669）を呼ぶ。ポートが無い／失敗した場合は何もしない（ランタイムは各ポートを protect する）。
+  **unverified on Windows**: デスクトップ（Progman）への SetForegroundWindow が前面ロックで拒否されうる。そのときは、少なくとも park 済みの窓にフォーカスが残る状況は変わらない（現状と同じ）。
+  結果として届く `focus-changed`（デスクトップの hwnd）は、管理外の窓として `external` を立てる（E 系の既存の扱い）。R-10 の再主張は `:focus` だけが対象なので、`focus-none` を再主張しない。
+- 検討して採らなかった案: 空のワークスペースの代わりに「ダミーの透明窓」を作る案（窓を1つ増やす割に利点が少ない）。park した窓に `WS_EX_NOACTIVATE` を足す案（Jwno の transform の外で窓のスタイルを書き換える）。
+
+### 実装の順序
+1. 本節のレビュー（Opus）。2. Core: `visibility-effects` の `shows`、`focus-none` の導出、`effect-rank`、不変条件の更新（`docs/INVARIANTS.md` の H-b・H-c・F12）、`test/update-test.janet`・`test/property-test.janet`（H-c のミラーと F12 を生成器に加える）。
+3. ランタイム: ポート `:focus-none` の実行。4. アダプタ: ポートの実装と契約テスト（unverified on Windows の注記付き）。
