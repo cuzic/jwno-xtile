@@ -1,0 +1,128 @@
+# Builds Jwno 0.9.16 (MIT, agent-kilo/jwno) with jw32 (MIT) and uploads jwno.exe for a real-machine test.
+# The artifact carries Jwno's LICENSE (MIT requires the notice), and expires after one day.
+name: build-jwno
+on:
+  workflow_dispatch:
+
+env:
+  WIN_SDK_VERSION: "10.0.26100.0"
+  JWNO_REF: "758edf38e32a5ea28b1016b9c5d559240d320b10"   # 0.9.16
+  JANET_VERSION: "1.40.1"                                  # what Jwno pins
+  JANET_DIR: "${{ github.workspace }}\\janet"
+  JANET_SOURCE_PATH: "${{ github.workspace }}\\janet_src"
+  JANET_PATH: "${{ github.workspace }}\\janet\\Library"
+  JANET_BINPATH: "${{ github.workspace }}\\janet\\bin"
+  JANET_HEADERPATH: "${{ github.workspace }}\\janet\\C"
+  JANET_LIBPATH: "${{ github.workspace }}\\janet\\C"
+  JANET_MANPATH: "${{ github.workspace }}\\janet\\docs"
+  JPM_VERSION: "207ebf3d47bbb6dbe5dcd26d5bb37ca5b8e1ed5a"
+  JPM_DIR: "${{ github.workspace }}\\jpm"
+  JPM_CMD: "${{ github.workspace }}\\janet\\bin\\janet.exe ${{ github.workspace }}\\janet\\bin\\jpm"
+  JW32_DIR: "${{ github.workspace }}\\jw32"
+  JWNO_DIR: "${{ github.workspace }}\\jwno"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: This repository (probe scripts)
+        uses: actions/checkout@v4
+        with:
+          path: xtile
+
+      - name: Jwno source
+        uses: actions/checkout@v4
+        with:
+          repository: agent-kilo/jwno
+          path: ${{ env.JWNO_DIR }}
+          ref: ${{ env.JWNO_REF }}
+
+      - name: MSVC developer environment
+        uses: TheMrMilchmann/setup-msvc-dev@v3.0.0
+        with:
+          arch: x64
+          sdk: ${{ env.WIN_SDK_VERSION }}
+
+      - name: Janet source (jw32 builds against its headers)
+        uses: actions/checkout@v4
+        with:
+          repository: janet-lang/janet
+          path: ${{ env.JANET_SOURCE_PATH }}
+          ref: v${{ env.JANET_VERSION }}
+
+      - name: Install Janet
+        shell: pwsh
+        run: |
+          $msi = "janet-$env:JANET_VERSION-windows-x64-installer.msi"
+          Invoke-WebRequest "https://github.com/janet-lang/janet/releases/download/v$env:JANET_VERSION/$msi" -OutFile $msi
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/quiet /passive /qn /l* janet_install.log /i $msi APPLICATIONFOLDER=`"$env:JANET_DIR`""
+          if ($p.ExitCode -ne 0) { Get-Content janet_install.log -Tail 40; exit $p.ExitCode }
+
+      - name: JPM source
+        uses: actions/checkout@v4
+        with:
+          repository: janet-lang/jpm
+          path: ${{ env.JPM_DIR }}
+          ref: ${{ env.JPM_VERSION }}
+
+      - name: Bootstrap JPM
+        working-directory: ${{ env.JPM_DIR }}
+        run: ${{ env.JANET_DIR }}\bin\janet.exe ${{ env.JPM_DIR }}\bootstrap.janet
+
+      - name: JPM show-paths
+        run: ${{ env.JPM_CMD }} show-paths
+
+      - name: Jw32 source (master, as Jwno's release workflow does)
+        uses: actions/checkout@v4
+        with:
+          repository: agent-kilo/jw32
+          path: ${{ env.JW32_DIR }}
+          ref: master
+
+      - name: Record the Jw32 commit
+        working-directory: ${{ env.JW32_DIR }}
+        run: git rev-parse HEAD
+
+      - name: Jw32 vcs-version
+        working-directory: ${{ env.JW32_DIR }}
+        run: ${{ env.JPM_CMD }} -l run vcs-version
+
+      - name: Build Jw32
+        working-directory: ${{ env.JW32_DIR }}
+        run: ${{ env.JPM_CMD }} -l build
+
+      - name: Jwno deps
+        working-directory: ${{ env.JWNO_DIR }}
+        run: ${{ env.JPM_CMD }} --update-pkgs -l deps
+
+      - name: Install Jw32 into Jwno's tree
+        working-directory: ${{ env.JW32_DIR }}
+        run: ${{ env.JPM_CMD }} --tree=${{ env.JWNO_DIR }}\jpm_tree install
+
+      - name: Jwno vcs-version
+        working-directory: ${{ env.JWNO_DIR }}
+        run: ${{ env.JPM_CMD }} -l run vcs-version
+
+      - name: Build Jwno
+        working-directory: ${{ env.JWNO_DIR }}
+        run: ${{ env.JPM_CMD }} -l run embed-manifest
+
+      - name: Collect the artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item "${{ env.JWNO_DIR }}\build\jwno.exe" out\
+          Copy-Item "${{ env.JWNO_DIR }}\LICENSE" out\JWNO-LICENSE
+          $h = (Get-FileHash out\jwno.exe -Algorithm SHA256).Hash
+          "$h  jwno.exe" | Out-File -Encoding ascii out\jwno.exe.sha256
+          "Jwno 0.9.16 (${{ env.JWNO_REF }}), built with jw32 master on windows-2022. MIT. Not an official release." | Out-File -Encoding ascii out\README.txt
+          Get-ChildItem out | Format-Table Name, Length
+          Write-Host "sha256 $h"
+
+      - name: Upload jwno.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: jwno-exe
+          path: out
+          retention-days: 1
+          if-no-files-found: error

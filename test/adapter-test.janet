@@ -700,3 +700,24 @@
   (array/clear (w :later))
   (each [_ f] pending (f))
   (is= 0 (length (w :later))))
+
+(deftest "filter-window: Jwno must not even manage a window of another Windows virtual desktop (its transform would un-maximise it)"
+  (def w (fake-world))
+  (put w :desktop g1)
+  (def a (install-adapter w))
+  (def here ((w :add-window!) 4 g1))
+  (def there ((w :add-window!) 5 g2))
+  (def filter (get (w :hooks) :filter-window))
+  (is filter)
+  (is (filter (hw 4) :uia "x" {:id g1}))                 # this desktop: Jwno may manage it
+  (is (not (filter (hw 5) :uia "x" {:id g2})))           # another desktop: hands off
+  # no desktop was ever created: everything is ours
+  (def w2 (fake-world))
+  (install-adapter w2)
+  ((w2 :add-window!) 6 g2)
+  (is ((get (w2 :hooks) :filter-window) (hw 6) :uia "x" {:id g2}))
+  # the filter must never block Jwno when the question cannot be answered
+  (def w3 (fake-world))
+  (put w3 :win32 (merge (w3 :win32) {:on-current-desktop? (fn [_] (error "COM failed"))}))
+  (install-adapter w3)
+  (is ((get (w3 :hooks) :filter-window) (hw 7) :uia "x" nil)))

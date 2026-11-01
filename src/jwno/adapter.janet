@@ -229,6 +229,14 @@
     (unless a-active?
       (log-fn :warn "could not wrap Jwno's set-focus: falling back to the delayed re-assertion only")))
 
+  # ---- filter: Jwno must not manage windows of other Windows virtual desktops at all --------
+  # Jwno adds the windows of EVERY desktop at start, and its transform un-maximises a window whatever
+  # :swp-flags says (contract test CT-7b). Without this filter, starting the WM would restore the
+  # maximised windows the user has on their other desktops. (This is not a tile/float/ignore decision:
+  # that stays in the core, ADR 0010 M3.)
+  (:add-hook hook-man :filter-window
+             (fn [hwnd & _] (on-current-desktop? hwnd)))
+
   # ---- hooks: copy the values now, dispatch after Jwno has finished (D3, D5) --------------
   (:add-hook hook-man :window-created
              (fn [win uia-win _exe-path desktop-info]
