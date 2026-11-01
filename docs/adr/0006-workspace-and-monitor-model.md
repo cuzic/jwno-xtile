@@ -1,6 +1,6 @@
 # 0006. ワークスペースの実装方式とモニタモデル
 
-- 状態: Accepted（改訂 3: 案 2 に決定。Opus レビュー 1 回の High 3・Med 5 を反映。Core の hide/show・アダプタの park・回復を実装し、ホスト型 Windows（Server 2022 と Server 2025）の契約テスト 45 項目で検証済み。実機（Windows 10/11）は未検証。Opus の実装後の再確認は未実施）
+- 状態: Accepted（改訂 3: 案 2 に決定。Opus レビュー 1 回の High 3・Med 5 を反映。Core の hide/show・アダプタの park・回復を実装し、ホスト型 Windows（Server 2022 と Server 2025）の契約テスト 45 項目で検証済み。実機（Windows 11、空の専用デスクトップのみ）で基本の動作を確認。Opus の実装後の再確認（2026-11-01、High 3・Med 8）の指摘に対応中）
 - 日付: 2026-10-31
 
 ## Context
@@ -107,5 +107,5 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 - 契約テストが、D-4 の「現在のデスクトップの窓だけ」の判定に Jwno の `last-vd` を使うと起動直後に全窓が除外される、と見つけた。窓ごとに `IsWindowOnCurrentVirtualDesktop` を使う
   （Windows 自身に聞く。同期でリトライ無し）方式に改めた。
 - `:sw-hide`（opt-in）は未実装のまま。デスクトップごとの state の入れ替えは需要が出るまで見送り。
-- **実機の記録（2026-11-01、Windows 11）**: park・復帰・終了時の復元・異常終了からの回復・仮想デスクトップの往復が実機でも通った（`docs/spike/2026-11-01-real-machine.md`）。
-  新しい仮想デスクトップへの切替では、Jwno の `desktop-name-changed` が届かないことがある。窓の管理は、窓ごとの `IsWindowOnCurrentVirtualDesktop` とポーリングで追従するので影響しない。
+- **実機の記録（2026-11-01、Windows 11。空の専用デスクトップだけで試した）**: 新しく作ったデスクトップで、park・復帰・終了時の復元・異常終了からの回復（Notepad）が通った（`docs/spike/2026-11-01-real-machine.md`）。
+  **未検証**: 以前からある窓のあるデスクトップへの切替、デスクトップの削除、park した窓を持ったままの仮想デスクトップ往復、Chromium／UWP の窓、副モニタ、全画面。新しい仮想デスクトップへの切替で Jwno の `desktop-name-changed` が届かないことがあり、その間の追従はポーリング（2 秒）任せで、追従前に focus を出すと元のデスクトップへ引き戻される恐れがある（Opus M2、未対応）。

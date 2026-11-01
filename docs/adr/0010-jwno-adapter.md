@@ -121,7 +121,7 @@ snapshot の `append` で入るので、ADR 0008 の「insertUp で新規扱い�
 - `:goto`／`:send` のポートは何もしない（Core の `[:hide]`／`[:show]` が実体。アダプタが窓を画面外へ park／復元する）。`:xtile :goto 2` のように数値でタグを書ける。
 - 段階 2 の「VD の番号とタグの対応」は不要になった。
 
-### D9 ユーザーのドラッグ／リサイズと、窓の位置のずれ（2026-10-31 追記。Opus のレビュー 2 回を反映。ホスト型 Windows の契約テストで検証済み）
+### D9 ユーザーのドラッグ／リサイズと、窓の位置のずれ（2026-10-31 追記。Opus のレビュー 2 回を反映。ホスト型 Windows の契約テストで検証済み。実機では未検証）
 契約テスト（CT-1）で `jw32` に `SetWinEventHook`・`PeekMessage`・`DispatchMessage` があると分かったので、ADR 0005 §3-5 を実装する。二つの経路を分ける:
 
 **(1) ユーザーのドラッグ／リサイズ → 窓がフロートになる（xmonad の `mouseMoveWindow`/`mouseResizeWindow` と同じ）**

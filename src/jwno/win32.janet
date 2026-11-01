@@ -3,7 +3,8 @@
 # source where Jwno uses it (GetAncestor, GetWindow, GetWindowLong, IsIconic, IsWindowVisible,
 # GetForegroundWindow, GetWindowRect, MonitorFromWindow, GetMonitorInfo, CoCreateInstance); the rest
 # (IsHungAppWindow, MessageBeep) are NOT in this jw32 (contract test CT-1 listed it); they are looked up by name at run time (a bare unknown symbol is a COMPILE error) and the adapter lives without them.
-# UNVERIFIED ON WINDOWS: no test loads this file yet (ADR 0010 stage 2).
+# Loaded by the contract tests on hosted Windows Server 2022/2025 and on one real Windows 11 PC; see
+# docs/spike/2026-11-01-real-machine.md for what is not covered.
 
 (use jw32/_winuser)
 (use jw32/_combaseapi)

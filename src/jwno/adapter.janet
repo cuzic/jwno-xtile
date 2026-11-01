@@ -3,7 +3,8 @@
 #
 # It imports neither jw32 nor jwno/*: Jwno's `context` and an OS-call table `win32` are passed in
 # (so Linux can load and test it with fakes). Everything about Jwno's API here was read from the
-# source (Jwno 0.9.16) and is UNVERIFIED ON WINDOWS until the contract tests exist.
+# source (Jwno 0.9.16). The contract tests (spike/run-contract.ps1) cover it on hosted Windows Server and, partly,
+# on one real Windows 11 PC (docs/spike/2026-11-01-real-machine.md); what they do not cover is listed there.
 #
 # win32 (functions, all total or throwing only on programmer error):
 #   :foreground-hwnd ()        -> hwnd|nil          GetForegroundWindow
@@ -230,7 +231,8 @@
       (log-fn :warn "could not wrap Jwno's set-focus: falling back to the delayed re-assertion only")))
 
   # ---- filter: Jwno must not manage windows of other Windows virtual desktops at all --------
-  # Jwno adds the windows of EVERY desktop at start, and its transform un-maximises a window whatever
+  # Jwno manages the window that has the focus at start (real run 3), and windows that open or get the focus
+  # later, on ANY desktop (UNVERIFIED which of these reach it for other desktops); its transform un-maximises a window whatever
   # :swp-flags says (contract test CT-7b). Without this filter, starting the WM would restore the
   # maximised windows the user has on their other desktops. (This is not a tile/float/ignore decision:
   # that stays in the core, ADR 0010 M3.)

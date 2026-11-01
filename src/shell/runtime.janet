@@ -10,8 +10,8 @@
 #   misc:      :later (seconds thunk)  :log (level msg)  :notify (kind id)
 #   config:    :reassert? (default true) -- ADR 0009 R-10 switch (false = mitigation A only)
 # Any port function may throw; the runtime protects every call.
-# Everything here is UNVERIFIED ON WINDOWS: the port shape is imagined until
-# the Jwno adapter's contract tests exist.
+# The port shape is exercised by the Jwno adapter's contract tests (hosted Windows Server and one real
+# Windows 11 PC; docs/spike/2026-11-01-real-machine.md lists what is not covered).
 
 (import ../core/update :as u)
 (import ../core/state :as st)
