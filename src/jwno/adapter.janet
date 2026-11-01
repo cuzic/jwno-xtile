@@ -94,12 +94,11 @@
     (if ok ds @[]))
 
   (defn on-current-desktop?
-    "A window on another Windows virtual desktop is not ours. Unknown (no desktop was ever created,
-    or the window has no desktop) counts as current."
-    [guid]
-    (def current (in wm :last-vd))
-    (or (nil? current) (nil? guid)
-        (= (string/ascii-upper (string current)) (string/ascii-upper (string guid)))))
+    "A window on another Windows virtual desktop is not ours. We ask Windows itself, per window:
+    Jwno's `last-vd` is not comparable to a window's desktop id at start (contract test CT-3)."
+    [hwnd]
+    (def [ok here] (protect (w :on-current-desktop? hwnd)))
+    (or (not ok) here))
 
   # ---- parking: a window of another workspace is moved off-screen and remembered ----------
   (def parked @{})   # id -> {:rect where it was :at where we put it}; OS-boundary memory, not WM state
@@ -166,7 +165,7 @@
                 id (do (set step :norm) (norm hwnd))]
             (when id
               (set step :desktop-guid)
-              (when (on-current-desktop? (w :desktop-guid hwnd))
+              (when (on-current-desktop? hwnd)
                 (put fresh id (get num->hwnd id))
                 (set step :facts)
                 [id nil (facts-of id hwnd)])))))
@@ -236,7 +235,7 @@
                (pin! win)
                (def id (norm (in win :hwnd)))
                (when id
-                 (def here? (on-current-desktop? (when desktop-info (in desktop-info :id))))
+                 (def here? (on-current-desktop? (in win :hwnd)))
                  (log-fn :debug (string/format "window-created id=%q desktop-info=%q current-desktop=%q" id desktop-info here?))
                  (when here?
                    (put extras id

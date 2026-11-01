@@ -333,11 +333,12 @@ if (-not $j.HasExited -and $started) {
   [void](Cmd ":xtile :goto 2")
   [void](WaitFor { (Parked $i0) } 8)
   $wasParked = (Parked $i0)
-  [void](Cmd "quit")
-  [void]$j.WaitForExit(15000)
+  $qout = Cmd "quit"
+  [void]$j.WaitForExit(30000)
   Start-Sleep 2
-  $ids = @($i0, $i2) | Where-Object { $_ }
-  Check "CT-22a" ($(if ($wasParked -and $j.HasExited -and -not (Parked $i0) -and -not (Parked $i2)) { "PASS" } else { "FAIL" })) "quitting Jwno brings every parked window back on screen" ("parked before=$wasParked exited=" + $j.HasExited + " n0=" + ((Frame $h0) -join ","))
+  Check "CT-22a" ($(if ($wasParked -and -not (Parked $i0) -and -not (Parked $i2)) { "PASS" } else { "FAIL" })) "quitting Jwno brings every parked window back on screen" ("parked before=$wasParked n0=" + ((Frame $h0) -join ",") + " n2=" + ((Frame $h2) -join ",") + " [client: $qout]")
+  Check "CT-22a2" ($(if ($j.HasExited) { "PASS" } else { "FAIL" })) "... and Jwno exits" ("exited=" + $j.HasExited)
+  if (-not $j.HasExited) { Stop-Process -Id $j.Id -Force; Start-Sleep 2 }
   # a crash: park again under a fresh Jwno, kill it without a chance to clean up, start another
   $j = StartJwno
   [void](WaitFor { (Has $i0) } 12)

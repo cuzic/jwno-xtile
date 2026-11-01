@@ -57,6 +57,13 @@
       (set vdm (CoCreateInstance CLSID_VirtualDesktopManager nil CLSCTX_INPROC_SERVER
                                  IVirtualDesktopManager))))
 
+(defn on-current-desktop?
+  "Windows' own answer (IVirtualDesktopManager, synchronous, no retry). Jwno's `last-vd` cannot be
+  compared with a window's desktop id: at start it holds something else (contract test CT-3). If the
+  question cannot be answered, the window counts as ours."
+  [hwnd]
+  (guarded true (fn [] (not= FALSE (:IsWindowOnCurrentVirtualDesktop (vdm*) (GetAncestor hwnd GA_ROOT))))))
+
 (defn foreground-hwnd [] (GetForegroundWindow))
 
 (defn root-of [hwnd] (GetAncestor hwnd GA_ROOT))
@@ -170,6 +177,7 @@
    :hwnd->number hwnd->number
    :facts facts
    :desktop-guid desktop-guid
+   :on-current-desktop? on-current-desktop?
    :minimized? minimized?
    :zoomed? zoomed?
    :mouse-down? mouse-down?

@@ -17,7 +17,7 @@
            :fg nil               # foreground hwnd (struct) or nil
            :roots @{}            # ptr -> root ptr (default: itself)
            :guids @{}            # ptr -> desktop guid
-           :minimized @{} :hung @{} :refuse @{} :zoomed @{} :mouse false :move-events @[] :move-cb nil :pump-throws false
+           :desktop nil :minimized @{} :hung @{} :refuse @{} :zoomed @{} :mouse false :move-events @[] :move-cb nil :pump-throws false
            :rects @{}            # ptr -> actual visible rect after a transform (default: as asked)
            :desktops @[]         # [index guid name]
            :refreshes 0
@@ -76,6 +76,9 @@
         :hwnd->number (fn [h] (h :ptr))
         :facts (fn [h] {:class "K" :visible? true :exe (string "a" (h :ptr) ".exe")})
         :desktop-guid (fn [h] (get (w :guids) (h :ptr)))
+        :on-current-desktop? (fn [h]
+                               (def g (get (w :guids) (h :ptr)))
+                               (or (nil? (w :desktop)) (nil? g) (= (w :desktop) g)))
         :minimized? (fn [h] (truthy? (get (w :minimized) (h :ptr))))
         :hung? (fn [h] (truthy? (get (w :hung) (h :ptr))))
         :beep (fn [] (rec :beep))
@@ -136,7 +139,7 @@
 
 (deftest "ADR 0006 D-4: a window on another Windows virtual desktop is not given to the core"
   (def w (fake-world))
-  (put (w :wm) :last-vd g1)                         # we are on desktop 1
+  (put w :desktop g1)                         # we are on desktop 1
   (def a (install-adapter w))
   (def here ((w :add-window!) 7 g1))
   (def there ((w :add-window!) 8 g2))
@@ -277,14 +280,14 @@
 
 (deftest "virtual-desktop-changed: the managed set is re-synced to the new desktop (the old one's windows leave)"
   (def w (fake-world))
-  (put (w :wm) :last-vd g1)
+  (put w :desktop g1)
   (def a (install-adapter w))
   (def on1 ((w :add-window!) 4 g1))
   ((get (w :hooks) :window-created) on1 :uia "x" {:id g1})
   (flush! w)
   (is= "1" (st/locate (state-of a) 4))
   # the user moves to desktop 2, where window 5 lives
-  (put (w :wm) :last-vd g2)
+  (put w :desktop g2)
   ((w :add-window!) 5 g2)
   ((get (w :hooks) :virtual-desktop-changed) g2 "Desktop 2" nil)
   (flush! w)
@@ -294,7 +297,7 @@
 (deftest "start: observes the existing windows, warns about several desktops, and schedules the poll"
   (def w (fake-world))
   (put w :desktops @[[1 g1 nil] [2 g2 nil]])
-  (put (w :wm) :last-vd g2)
+  (put w :desktop g2)
   ((w :add-window!) 4 g2)
   ((w :add-window!) 5 g1)
   (def a (install-adapter w))
@@ -334,7 +337,7 @@
   (is= [1 3] (tuple ;(map first snap)))
   (is (nil? ((first snap) 1)))                       # the tag is the core's business (ADR 0006)
   # a window on another virtual desktop is left out of the snapshot
-  (put (w :wm) :last-vd g1)
+  (put w :desktop g1)
   ((w :add-window!) 4 g2)
   (is= [1 3] (tuple ;(map first ((a :enumerate))))))
 
