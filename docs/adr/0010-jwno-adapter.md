@@ -205,3 +205,6 @@ snapshot の `append` で入るので、ADR 0008 の「insertUp で新規扱い�
 - **D9 の実装後の記録（2026-10-31）**: `SetWinEventHook` をメインスレッドで張り、アダプタの ev ファイバーが 100ms ごとに `PeekMessage`/`DispatchMessage` を回す方式は、
   ホスト型 Windows の契約テストで成り立った（コールバックは hwnd をキューに入れるだけで、取り出す側が矩形を読んで dispatch する）。タイトルバーのクリックだけではフロートにならず、
   ドラッグしたタイルはフロートになってドロップ位置にとどまり、最大化したタイルもフロートになる。詳細は `docs/spike/2026-10-31-hosted-windows.md`。
+- **実機の記録（2026-11-01）**: Jwno は起動時にフォーカスのある窓しか管理しないため、アダプタが `start` で UI Automation の最上位の窓を列挙し、
+  Jwno の `:window-opened` に渡す（`adopt-existing!`）。ハーネスのフォーカス操作は `AttachThreadInput` が要る。合成ドラッグはこの実機で効かず、ドラッグ検出は実機では手動確認とする。
+  詳細は `docs/spike/2026-11-01-real-machine.md`。

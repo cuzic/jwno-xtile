@@ -1,6 +1,6 @@
 # 0004. Core は Frame 操作ではなく矩形を出力する
 
-- 状態: Proposed（Windows 実機でのスパイク後に確定。Opus 指摘 R8 反映済み）
+- 状態: **Accepted**（2026-11-01。矩形の配置は、ホスト型 Windows と実機（Windows 11）の契約テストで 0 px 差を確認。Opus 指摘 R8 反映済み）
 - 日付: 2026-10-31
 
 ## Context

@@ -107,3 +107,5 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 - 契約テストが、D-4 の「現在のデスクトップの窓だけ」の判定に Jwno の `last-vd` を使うと起動直後に全窓が除外される、と見つけた。窓ごとに `IsWindowOnCurrentVirtualDesktop` を使う
   （Windows 自身に聞く。同期でリトライ無し）方式に改めた。
 - `:sw-hide`（opt-in）は未実装のまま。デスクトップごとの state の入れ替えは需要が出るまで見送り。
+- **実機の記録（2026-11-01、Windows 11）**: park・復帰・終了時の復元・異常終了からの回復・仮想デスクトップの往復が実機でも通った（`docs/spike/2026-11-01-real-machine.md`）。
+  新しい仮想デスクトップへの切替では、Jwno の `desktop-name-changed` が届かないことがある。窓の管理は、窓ごとの `IsWindowOnCurrentVirtualDesktop` とポーリングで追従するので影響しない。
