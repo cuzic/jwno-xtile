@@ -1,1 +1,1 @@
-^(?!\S+ STATE).*(started|installed|window-created|window-removed|error|exit|stopp|shutdown)
+^17935129[0-9][0-9]\.\d+ STATE
