@@ -3,6 +3,7 @@
 # Events (input data):
 #   [:window-opened id &opt tag]      [:window-closed id]
 #   [:window-seen id facts &opt tag]  (ADR 0008: classify once; later only hiding)
+#   [:window-dragged id rect]         (the user moved/resized it: floats, if rect differs from our placement)
 #   [:focus-changed id-or-nil]        [:desktop-changed tag]
 #   [:screen-changed rect]            [:window-moved id observed-rect]
 #   [:windows-observed [[id tag-or-nil] ...]]   (snapshot, first = topmost)
@@ -217,6 +218,22 @@
               (d/assoc {:external-focus false}))
           acc)))))
 
+(defn- window-dragged
+  "The user moved or resized `id` (ADR 0008 addendum): in xmonad that floats the window. Only when
+  the window really ended up somewhere else than where we put it -- pressing the title bar and
+  letting go also ends a move loop, and must not float anything."
+  [s id rect]
+  (def tag (and (valid-id? id) (valid-rect? rect) (st/locate s id)))
+  (cond
+    (nil? tag) s
+    (not= tag (s :current)) s
+    (st/floating? s id) s
+    (= rect ((st/placements s) id))
+    (if (get-in s [:misfit id])
+      (d/assoc s {:misfit (d/without (s :misfit) id)})
+      s)
+    (set-floating s id true)))
+
 (defn- window-moved
   "-> [state effects]"
   [s id rect]
@@ -423,6 +440,7 @@
           (case kind
             :window-opened [(open-window s (get args 0) (get args 1)) [] false]
             :window-closed [(close-window s (get args 0)) [] false]
+            :window-dragged [(window-dragged s (get args 0) (get args 1)) [] false]
             :window-seen [(window-seen s (get args 0) (get args 1) (get args 2)) [] false]
             :focus-changed [(focus-window s (get args 0)) [] true]
             :desktop-changed [(desktop-changed s (get args 0)) [] true]

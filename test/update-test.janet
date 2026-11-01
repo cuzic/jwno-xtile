@@ -358,3 +358,58 @@
   # but observing the override does not: that is what we repair
   (is (((u/update s0 [:focus-changed :b]) :state) :pending-focus))
   (is (((u/update s0 [:desktop-changed "2"]) :state) :pending-focus)))   # our own goto, confirmed by the OS
+
+# ---- ADR 0008 addendum: [:window-dragged id rect] ----------------------
+
+(defn tiled-state
+  "a, b, c on workspace 1 (Tall, 1000x600): c master. -> state"
+  []
+  ((run (fresh) [:window-opened :a] [:window-opened :b] [:window-opened :c]) 0))
+
+(deftest "dragged to a different rect: the window floats where it was dropped, the rest re-tile"
+  (def s (tiled-state))
+  (def moved {:x 40 :y 50 :w 300 :h 200})
+  (def r (u/update s [:window-dragged :b moved]))
+  (is (st/floating? (r :state) :b))
+  (is= (st/focused s) (st/focused (r :state)))                         # focus untouched
+  (is= ((st/current-ws s) :ids) ((st/current-ws (r :state)) :ids))     # order untouched
+  (is (not (find |(and (= (first $) :place) (= (get $ 1) :b)) (r :effects))))   # never placed again
+  (is (find |(= (first $) :place) (r :effects))))                      # the others fill the gap
+
+(deftest "dragged to the SAME rect (a click on the title bar): nothing becomes floating"
+  (def s (tiled-state))
+  (def here ((st/placements s) :b))
+  (def r (u/update s [:window-dragged :b here]))
+  (is (not (st/floating? (r :state) :b)))
+  (is= s (r :state))
+  (is= [] (tuple ;(r :effects))))
+
+(deftest "dragging clears a stale misfit count, and is idempotent"
+  (def s (tiled-state))
+  (def far {:x 1 :y 1 :w 10 :h 10})
+  (def [s1 _] (run s [:window-moved :b far] [:window-moved :b far]))
+  (is (get-in s1 [:misfit :b]))
+  (def r1 (u/update s1 [:window-dragged :b far]))
+  (is (nil? (get-in (r1 :state) [:misfit :b])))
+  (def r2 (u/update (r1 :state) [:window-dragged :b far]))
+  (is= (r1 :state) (r2 :state))
+  (is= [] (tuple ;(r2 :effects))))
+
+(deftest "dragged: unknown, invalid, already floating, ignored and other-workspace windows change nothing"
+  (def s (tiled-state))
+  (def far {:x 1 :y 1 :w 10 :h 10})
+  (each ev [[:window-dragged :nope far] [:window-dragged :b] [:window-dragged :b "x"]
+            [:window-dragged :b {:x 0 :y 0 :w -1 :h 5}] [:window-dragged @[1] far] [:window-dragged nil far]]
+    (is= s ((u/update s ev) :state)))
+  (def [s2 _] (run (fresh) [:window-opened :a] [:window-opened :z "2"]))
+  (is= s2 ((u/update s2 [:window-dragged :z far]) :state))             # not on the visible workspace
+  (def [s3 _] (run s [:command :toggle-float]))                         # nothing is focused-and-observed: no-op
+  (def [s4 _] (run s [:focus-changed :b] [:command :toggle-float]))
+  (is (st/floating? s4 :b))
+  (is= s4 ((u/update s4 [:window-dragged :b far]) :state)))
+
+(deftest "dragging never lowers :external-focus and does not touch the OS focus record"
+  (def [s _] (run (tiled-state) [:focus-changed :b]))
+  (def r (u/update s [:window-dragged :a {:x 1 :y 1 :w 10 :h 10}]))
+  (is= (s :os-focus) ((r :state) :os-focus))
+  (is= (s :external-focus) ((r :state) :external-focus)))

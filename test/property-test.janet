@@ -38,6 +38,8 @@
    [:window-moved :w1 5] [:window-moved @[1] {:x 0 :y 0 :w 1 :h 1}]
    [:windows-observed 5] [:windows-observed [5 [:a]]] [:windows-observed [[@[1] "1"]]]
    [:window-seen :w1 5] [:window-seen :w1] [:window-seen :w1 nil] [:window-seen @[1] {}]
+   [:window-dragged] [:window-dragged :w1] [:window-dragged :w1 5] [:window-dragged @[1] {:x 0 :y 0 :w 5 :h 5}]
+   [:window-dragged :w1 {:x 0 :y 0 :w 0 :h 5}]
    [:window-seen :w1 "x" "1"] [:windows-observed [[:w1 "1" 5] [:w2 nil nil]]]
    [:command :goto @"1"] [:command @[1]] [:command :set-layout @[1]]])
 
@@ -68,7 +70,7 @@
 
 (defn random-event [rng]
   (def id (keyword "w" (math/rng-int rng 12)))
-  (case (math/rng-int rng 21)
+  (case (math/rng-int rng 23)
     0 [:window-opened id]
     1 [:window-opened id (pick rng tags)]
     2 [:window-opened id "bogus"]
@@ -89,6 +91,8 @@
     14 [:window-seen id (random-facts rng)]
     15 [:window-seen id (random-facts rng) (pick rng tags)]
     16 [:command :toggle-float]
+    18 [:window-dragged id (pick rng [(first screens) (g/rect 3 4 50 60) (g/rect (math/rng-int rng 40) 0 100 100)])]
+    19 [:window-dragged id (g/rect 0 0 (+ 1 (math/rng-int rng 500)) 300)]
     17 [:windows-observed
         (tuple ;(seq [_ :range [0 (math/rng-int rng 6)]]
                   [(keyword "w" (math/rng-int rng 12))
@@ -99,14 +103,14 @@
 (def silent-kinds
   {:focus-changed true :desktop-changed true :windows-observed true})
 (def idempotent-kinds
-  {:window-opened true :window-seen true :window-closed true :focus-changed true
+  {:window-opened true :window-seen true :window-dragged true :window-closed true :focus-changed true
    :desktop-changed true :screen-changed true :windows-observed true})
 
 # kinds that are not OS focus observations: they must never clear
 # :external-focus (E10)
 (def non-focus-observation
   {:window-closed true :screen-changed true
-   :window-moved true :command true})
+   :window-moved true :window-dragged true :command true})
 # window-opened may clear external focus only for the id last observed as OS
 # focus (Jwno reports focus before :window-opened) -- checked in check-external
 
@@ -237,8 +241,39 @@
         (unless (and (deep= s old) (empty? (r :effects)))
           (errorf "Q1/Q6 reassert acted when it must not: %q -> %q" event (r :effects)))))))
 
+(defn- int-ish? [x] (and (number? x) (= x (math/floor x))))
+
+(defn check-dragged [old r event]
+  (when (= (get event 0) :window-dragged)
+    (def s (r :state))
+    (def [_ id rect] event)
+    (def valid? (and (or (number? id) (keyword? id) (string? id))
+                     (struct? rect) (int-ish? (get rect :x)) (int-ish? (get rect :y))
+                     (int-ish? (get rect :w)) (int-ish? (get rect :h)) (pos? (get rect :w)) (pos? (get rect :h))))
+    (def tag (and valid? (st/locate old id)))
+    (def acts? (and tag (= tag (old :current)) (not (st/floating? old id))))
+    (cond
+      (not acts?)
+      (unless (and (deep= s old) (empty? (r :effects)))
+        (errorf "D: window-dragged changed something it must ignore: %q" event))
+      (= rect ((st/placements old) id))
+      # a click on the title bar: not floating (D2); at most a stale misfit is dropped
+      (do
+        (when (st/floating? s id) (errorf "D2 an unmoved window became floating: %q" event))
+        (unless (deep= (r :effects) []) (errorf "D2 unmoved window produced effects: %q" event)))
+      (do
+        (unless (st/floating? s id) (errorf "D1 a moved window did not become floating: %q" event))
+        (each k [:os-focus :external-focus :current]
+          (unless (deep= (old k) (s k)) (errorf "D1 window-dragged changed %q" k)))
+        (unless (deep= ((st/current-ws old) :ids) ((st/current-ws s) :ids))
+          (errorf "D1 window-dragged reordered the stack: %q" event))
+        (unless (= (st/focused old) (st/focused s)) (errorf "D1 window-dragged moved the focus: %q" event))
+        (when (find |(and (= (first $) :place) (= (get $ 1) id)) (r :effects))
+          (errorf "D4 the dragged window was placed again: %q" event))))))
+
 (defn check-effects [old r event]
   (def s (r :state))
+  (check-dragged old r event)
   (check-reassert old r event)
   # Q5 (E2 extension): a :focus always targets a window of the CURRENT workspace,
   # so the core never causes an implicit desktop switch
@@ -544,3 +579,27 @@
   (set s ((u/update s [:window-seen :w {:exe "C:\\x\\c.exe" :visible? true}]) :state))
   (is (not (st/floating? s :w)))
   (is (st/locate s :w)))
+
+(deftest "D2: dragging a tile to exactly where we put it never floats it (a click on the title bar)"
+  (for seed 0 200
+    (def rng (math/rng (+ 40000 seed)))
+    (var s (new-state rng))
+    (for _ 0 40 (set s ((u/update s (random-event rng)) :state)))
+    (eachp [id rect] (st/placements s)
+      (def r (u/update s [:window-dragged id rect]))
+      (is (not (st/floating? (r :state) id)))
+      (is= [] (tuple ;(r :effects))))))
+
+(deftest "D1: a moved tile floats and the rest still tile the screen without gaps"
+  (for seed 0 200
+    (def rng (math/rng (+ 41000 seed)))
+    (var s (new-state rng))
+    (for _ 0 40 (set s ((u/update s (random-event rng)) :state)))
+    (def tiles (keys (st/placements s)))
+    (unless (empty? tiles)
+      (def id (pick rng tiles))
+      (def r (u/update s [:window-dragged id (g/rect 7 9 33 21)]))
+      (is (st/floating? (r :state) id))
+      (check-invariants (r :state) [:window-dragged id])
+      # a second identical drag changes nothing
+      (is= (r :state) ((u/update (r :state) [:window-dragged id (g/rect 7 9 33 21)]) :state)))))
