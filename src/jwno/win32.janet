@@ -100,7 +100,9 @@
    :minimized? (minimized? hwnd)
    :fullscreen? (fullscreen? hwnd (num style))
    :tool-window? (not (zero? (band (num ex-style) ws-ex-toolwindow)))
-   :owned? (not (nil? (GetWindow hwnd GW_OWNER)))})
+   :owned? (let [owner (GetWindow hwnd GW_OWNER)]
+             # jw32 returns a NULL pointer, not nil, for "no owner" (Jwno itself tests `null?`)
+             (not (or (nil? owner) (null? owner))))})
 
 (def win32
   {:foreground-hwnd foreground-hwnd

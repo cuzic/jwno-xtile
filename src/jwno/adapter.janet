@@ -211,6 +211,7 @@
                (def id (norm (in win :hwnd)))
                (when id
                  (def tag (when desktop-info (tag-of-guid (in desktop-info :id))))
+                 (log-fn :debug (string/format "window-created id=%q desktop-info=%q tag=%q" id desktop-info tag))
                  (unless (= tag :unmappable)
                    (put extras id
                         (table/to-struct

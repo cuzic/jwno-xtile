@@ -95,6 +95,8 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
       $diffs += ("{0}: core=[{1}] actual=[{2}]" -f $w.id, ($w.rect -join ","), ($f -join ","))
     }
   }
+  $tiled = @($s.windows | Where-Object { $_.rect }).Count
+  if ($tiled -eq 0) { $worst = 999; $diffs = @("no window is tiled: " + ($s.windows | ConvertTo-Json -Compress)) }
   Check "CT-5" ($(if ($worst -le 1) { "PASS" } else { "FAIL" })) "place puts each window's visible frame on the core's rect (worst diff $worst px)" ($diffs -join " | ")
   $mm = Count 'place mismatch'
   Check "CT-5b" "INFO" "read-back mismatches logged by the adapter during the placements above" "count=$mm"
@@ -109,6 +111,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   # a manual move survives Jwno's retile, and the core's :refresh brings it back
   $h2 = $N2.MainWindowHandle
   $want = (Win $i2).rect
+  if (-not $want) { Check "CT-6x" "FAIL" "the window used for the move/refresh checks is tiled" ((Win $i2) | ConvertTo-Json -Compress) }
   [void][C]::SetWindowPos($h2, [IntPtr]::Zero, 30, 30, 400, 300, 0x0004)
   Start-Sleep 1; [void](Cmd "retile"); Start-Sleep 2
   $f = Frame $h2
@@ -116,7 +119,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   [void](Cmd ":xtile :refresh"); Start-Sleep 2
   $f = Frame $h2
   $d = 0; for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) }
-  Check "CT-6c" ($(if ($d -le 1) { "PASS" } else { "FAIL" })) "the core's :refresh puts it back" ("frame=" + ($f -join ",") + " want=" + ($want -join ","))
+  Check "CT-6c" ($(if ($want -and $d -le 1) { "PASS" } else { "FAIL" })) "the core's :refresh puts it back" ("frame=" + ($f -join ",") + " want=" + ($want -join ","))
 
   # ---- maximize: Jwno unmaximizes in its transform regardless of swp-flags (source) ----
   [void][C]::ShowWindow($h2, 3); Start-Sleep 1
@@ -174,6 +177,8 @@ Write-Host "===== contract summary ====="
 $results | Format-Table id, status, what -AutoSize -Wrap | Out-String -Width 200 | Write-Host
 $fail = @($results | Where-Object { $_.status -eq "FAIL" }).Count
 Write-Host ("PASS={0} FAIL={1} INFO={2}" -f @($results | Where-Object { $_.status -eq "PASS" }).Count, $fail, @($results | Where-Object { $_.status -eq "INFO" }).Count)
+Write-Host "===== last STATE lines ====="
+LogLines | Where-Object { $_ -match ' STATE ' } | Select-Object -Last 4 | Write-Host
 Write-Host "===== contract log (without STATE lines) ====="
-LogLines | Where-Object { $_ -notmatch ' STATE ' } | Select-Object -Last 80 | Write-Host
+LogLines | Where-Object { $_ -notmatch ' STATE ' } | Where-Object { $_ -notmatch "jw32-has|leaf-set" } | Select-Object -Last 120 | Write-Host
 if ($fail -gt 0) { exit 1 }
