@@ -1,6 +1,6 @@
 # 0010. Jwno アダプタ: ポートの実装、フック→event の変換、Jwno との分担
 
-- 状態: Accepted（改訂 4: Opus レビュー 3 回で収束、2026-10-31。段階 1 の `adapter.janet` はフェイクのテストで検査済み。`win32.janet` と設定例は書いたが未実行。API はソースを読んだだけで Windows 未検証。ADR 0004 は契約テストまで Proposed）
+- 状態: Accepted（改訂 4: Opus レビュー 3 回で収束、2026-10-31。段階 1 の実装を、フェイクと**ホスト型 Windows Server 上の契約テスト 21 項目**（`spike/run-contract.ps1`、すべて PASS）で検査済み。実機（Windows 10/11）は未検証）
 - 日付: 2026-10-31
 
 ## Context
@@ -159,3 +159,12 @@ ADR 0006（ワークスペースの実装方式）は未決だが、観測だけ
   Jwno が管理した窓の hwnd と `GA_ROOT` の一致（UWP を含む）、`window-created` が既存窓にも発火すること、A の (a)〜(d)（ADR 0009 A-4）と
   `wm :set-focus` がその 1 か所のみであること、`:monitor-updated` 後の再主張、ポーリングが最小化とフルスクリーンを拾うこと。
 - 段階 3: 実機チェックリスト（`docs/`）。ホスト型 Windows Server でなく Windows 10/11 のデスクトップで。
+
+## 実装後の記録（2026-10-31、契約テスト。詳細は `docs/spike/2026-10-31-hosted-windows.md`）
+- 設計の核（`:swp-flags` で Jwno の配置を無効化、フックの後での dispatch、A のメソッド単位のラップ、VD 番号 → tag）は、ホスト型 Windows で成り立った。
+  `:place` は DWM の見える枠で Core の矩形と完全に一致し、retile は窓を動かさず、デスクトップの往復で tag が保たれ、A はちょうど 1 回だけ効いた。
+- ソースを読んだだけでは分からなかった事実（D4・D5 の実装に反映済み）: `jw32` に `GetClassName`/`GetWindowText`/`IsHungAppWindow`/`MessageBeep` が無い
+  （class/title は UIA の要素から）／Jwno のキー名は `,` `.`／`GetWindow(GW_OWNER)` は NULL ポインタを返す／`GetWindowDesktopId` は整形済みの文字列／
+  `:window-created` は木への追加の前に発火する／Janet の `band` は符号付き 32 ビットのみ。
+- 残る差異: Jwno の transform は `:swp-flags` に関係なく最大化を解除する。**retile で最大化した窓が解除される**（許容するか、ADR 0007 の互換表に差異として書く）。
+- 将来: `jw32` に `SetWinEventHook` がある。`window-moved` と通知の無い変化の取得に使える可能性がある（未着手。D5 のポーリングの代替）。

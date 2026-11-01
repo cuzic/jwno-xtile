@@ -100,3 +100,42 @@ Core の `[:goto "1"]` + `[:focus C]` に相当する操作（デスクトップ
 - 確認項目 5 の**緩和策**の効果: Jwno の `:set-focus` を Shell が無効化/ラップする案（このスパイクで使った
   ラップと同じ手口）、`:goto` の後に `:focus` を遅らせる案（約 250ms 以上）、`:focus` 後の遅延再観測で不一致なら
   再度 `:focus` を出す案。どれも未検証。
+
+## 契約テスト: xtile のアダプタを実際の Jwno 0.9.16 に載せた結果（run 5 の後。`spike/run-contract.ps1`）
+ホスト型 Windows Server 2022、窓はメモ帳、モニタ 1 枚。**21 PASS / 0 FAIL / 4 INFO**。実機ではない。
+
+| 確認 | 結果 |
+|---|---|
+| アダプタのロード | `--mod-path <repo>` と `(require "src/jwno/adapter")` で解決できた。相対 import（`../core/...`）も動く |
+| id | Core の id は hwnd の10進数と一致。起動前からある窓も、`window-created` で Core に届く |
+| `:place` | DWM の見える枠が Core の矩形と**完全一致**（3 枚とも diff 0）。読み戻しの不一致は 0 件 |
+| `:swp-flags` による Jwno の無効化 | Jwno の `retile` が窓を動かさない。手動で動かした窓も retile では戻らず、Core の `:refresh` で戻る |
+| 最大化 | **Jwno の retile は最大化を解除する**（`zoomed before=True after=False`。ソースの予測どおり） |
+| ポーリング | 最小化した窓は 2 秒間隔の範囲内で Core から消え、復元で戻る |
+| フォーカス | OS のフォーカスが同じ id で Core に届く。`focus-next` が実際のフォーカスを動かす（窓の `:set-focus` 経由で、抑止されない） |
+| 仮想デスクトップ | 新デスクトップへの切替で Core の current が `"2"`、そこで開いた窓は tag `"2"`、戻ると `"1"`。往復で各窓の tag は保たれる |
+| A（抑止） | デスクトップ切替で Jwno の `wm :set-focus` がちょうど 1 回だけ握りつぶされ、アダプタ自身の `:focus` に起因しない `leaf` の呼び出しは 0 回 |
+| 自己診断 | 2 つのラッパーが入ったことを確認できた |
+
+### 契約テストが見つけた不具合（すべて修正済み。フェイクのテストでは見つからなかった）
+1. `jw32` に `GetClassName` / `GetWindowText` / `IsHungAppWindow` / `MessageBeep` が**ない**。未定義シンボルは Janet ではコンパイルエラーになる。
+   class と title は `:window-created` の UIA 要素から取り、id ごとに覚える。
+2. Jwno のキー名は小文字で、`Comma`/`Period` は `,`/`.`。Core の既定束縛をそのまま渡すと `install` 全体が止まった。
+3. `GetWindow(GW_OWNER)` は「オーナー無し」で nil でなく **NULL ポインタ**を返す（Jwno は `null?` で判定）。nil 判定のままだと、すべての窓が
+   「オーナー付き」= フロートになっていた（このとき CT-5 が空の PASS になっていた。以後、タイル窓が 0 枚なら FAIL にした）。
+4. `GetWindowDesktopId` の結果は、Jwno 内では**整形済みの文字列**。GUID のバイト列として再整形すると別の ID になり、デスクトップが 2 つ以上になった途端に
+   全窓が「対応できない」扱いでスナップショットから消えた。
+5. `:window-created` は Jwno が窓を木に入れる**前**に発火し、フレームの無い窓は木に入らない。フックの後で `find-hwnd` が成功した窓だけを Core に渡す。
+6. Janet の `band` は**符号付き 32 ビット**しか受け付けない。`WS_POPUP`（bit 31）のスタイルを符号なしにすると例外になり、その窓がポーリングから落ちた。
+7. 契約テスト自身の誤り: デスクトップ切替の直後に新しい窓が現れて Core が正当にフォーカスを与えることがあり、「leaf の呼び出しは 0 回」という判定は
+   厳しすぎた。アダプタ自身の `:focus` の分を引くようにした。
+
+### 新たに分かったこと
+- `jw32` に `SetWinEventHook` と `GetWindowLongPtr` がある。`window-moved`（ユーザーのドラッグ）や、通知の無い変化（最小化・フルスクリーン）を
+  ポーリングに頼らず拾える可能性が出た（未実装）。
+- 起動時、Jwno は実行環境自身のウィンドウ（`hosted-compute-agent` のコンソールなど）も管理する。
+
+### まだ確認していない
+- `:monitor-updated`（ディスプレイ設定の変更）後の再主張。ホスト型ランナーでは起こせなかった。
+- 最大化した窓の扱いの可否（上記のとおり、retile で解除される。許容するかは設計判断）。
+- UWP の窓での GA_ROOT と hwnd の一致、Windows 10/11 実機、複数モニタ、3 枚以上の窓、負荷のある状態。
