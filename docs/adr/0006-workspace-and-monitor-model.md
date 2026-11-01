@@ -169,3 +169,33 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 1. 本節のレビュー（Opus、2 回目）。2. Core: `visibility-effects` の `shows`、`stray-focus`、`:reclaim-focus`、`effect-rank`、不変条件の更新（`docs/INVARIANTS.md` の H-b・H-c・F12a〜d・P-1）、
 `test/update-test.janet`・`test/property-test.janet`（F12 を生成器に加える。`window-seen` で hidden を流す場合も）。3. ランタイム: `:focus-none` の実行、`:reclaim-focus` の予約（3 回で諦める）。
 4. アダプタ: `:focus-none` ポート、`:show` の画面外判定、`window-removed` と `parked`、フェイク OS のプロパティテスト。5. 契約テスト（Windows。すべて unverified on Windows として結果を記録する）。
+
+### 改訂 4c（2026-11-01。Opus の 2 回目の再レビュー R4b-H1・H2・M1〜M6・L1〜L4 を反映。D-7 のうち、ここに書いたものは上の記述を**上書き**する）
+- **D-7a 発火は遅延 0、`goto` は `:os-focus` を保つ（R4b-H1）**: `goto-tag` は `:os-focus` を消さない（OS の前面は `:goto` の後も実際に旧ウィンドウのままで、これは観測の事実。ADR 0005）。
+  `actionable?` は「Core のフォーカス＝`:os-focus`」を要求するので、旧ウィンドウを残しても破壊的操作は動かない（`desktop-changed` の採用ロジックへの影響は R1 系のテストで確認する）。
+  これにより、空への `goto` の effect 列自体に `[:focus-none]` が含まれ、F12a で直接検査できる。`:reclaim-focus` の予約 (i)(ii) は 250ms ではなく**遅延 0**（キューの末尾）。
+  OS が Z 順で次の窓を決めるのを待つ分は、既存の `schedule-reobserve`（200ms）が生む `focus-changed` からの (i) が担う（発火時の state で評価するので、待つ理由は無い）。
+- **D-7b `focus-none` の行き先は、入力を飲み込む WM 自身の窓（R4b-H2。前の「ダミーの窓は利点が少ない」を撤回）**: Jwno の `set-focus-to-desktop` はデスクトップのアイコンのリストビューにフォーカスし、
+  Enter で開く・Delete でごみ箱へ・F2 で名前の変更になる（推論。unverified on Windows）。H3 の害を別の害に置き換えるだけなので採らない。
+  `win32.janet` に **sink 窓**を足す: 1×1、`WS_POPUP`、`WS_EX_TOOLWINDOW`（タスクバー・Alt-Tab に出ない）、(-32000,-32000) に置き、`WM_KEYDOWN`／`WM_CHAR` などを `DefWindowProc` に渡さず捨てる。
+  jw32 は `RegisterClassEx`／`CreateWindowEx` を持つ（Jwno の `indicator.janet` が使っている）。ポート `:focus-none` は sink 窓を前面にする。sink 窓の hwnd は `adopt-existing!`・`recover-strays`・
+  `enumerate` の対象から除く（自分の窓。クラス名で判定）。作れなかった／前面にできなかった場合は、**何もしない**（デスクトップへのフォールバックはしない。破壊的な経路を作らないため）。
+  実装の前にスパイクで、ホスト型 Windows と実機の両方で「sink 窓が前面になる」「打鍵が捨てられる」を確かめる。
+- **D-7c 内部コマンドと状態（R4b-M1・M2）**: `:reclaim-focus` は `:reassert-focus` と同じく束縛不可（K3）で、`:pending-focus` を下ろさない（Q3 の例外を `#{:reassert-focus :reclaim-focus}` に）。
+  コマンド前の事前観測（`process-one`）は走ってよい（最新の前面で判定できる）。事前観測は `process-one` を通らないので (i) の予約を生まず、ループの防止になる。
+  予約は `:reobserve-pending` と同じ「予約中フラグ」で 1 本にまとめる。連続試行のカウンタは**判断なので Core の state**（`:reclaim-tries`）。増えるのは `:reclaim-focus` が effect を出したときだけ。
+  リセットは `:os-focus` が可視ワークスペースの窓、または管理外・nil になったとき。窓が消えたらそのキーは持たない（F1 系）。3 回で諦めたら `[:notify :reclaim-gave-up id]`（ログの warn）を出す。
+- **D-7d 既存の不変条件の改訂（R4b-M3・L1）**: `docs/INVARIANTS.md` を次のとおり変える。**E11**: 外部（external）中の `:focus` は、ユーザーが求めたものか、`stray-focus`（`:os-focus` が可視でないワークスペースの既知の窓）に限る。
+  **E6（冪等）**: `derive-effects` が `stray-focus` を足すのは**state が変わった遷移**に限る。同じ event を 2 回送った 2 回目には足さない（回復は `:reclaim-focus` が担う）。**E8・E10**: `stray-focus` の `:focus` は
+  external を下ろさない（下ろすのは観測だけ）。`:refresh` は `stray-focus` を評価しない（E8 のまま）。**Q3**: 上記。**Q5**: `stray-focus` の `:focus` の対象は `(st/focused s)` なので満たす。
+  `stray-focus` を足すのは「`derive-effects` が `:focus` を出さなかったとき」だけ（同じ対象なら `order-effects` の `distinct` で 1 つになる。`vis` が空のときは `:focus` が出ないので `[:focus-none]` と重ならない）。
+  **F12e（収束）**: フェイク OS で `:reclaim-focus` が拒否されないなら、高々 1 回の後に `:os-focus` は可視の窓か管理外になる。および `:reclaim-focus` が effect を出すのは連続 3 回まで。
+- **D-7e UX（R4b-M5）**: 既定は `:return`（250ms ではなく即座に可視の窓へ戻す）。通知のクリックやタスクバーで park した窓が選ばれた場合に、ユーザーがその窓へ行けないので、設定 `:stray-focus` に
+  `:follow`（その窓のワークスペースへ `goto` する）を用意する。`stray-focus` の分岐の一つとして Core に置く（小さい）。`:return` で戻したときは `[:notify :stray-returned id]`（ログ info。ビープは既定オフ）。
+  Alt-Tab／Task View の最中は前面がスイッチャー（管理外）なので何も出ない。確定後の `focus-changed` で改めて評価される（R4b-L3）。
+- **D-7f 前面ロックと P-1 の破れ（R4b-M4・M6）**: タイマー起点の `SetForegroundWindow` は前面ロックで拒否されうる（特に (c) タスクバー）。3 回で諦める設計はそのまま。契約テストで、`AttachThreadInput` を使わずに
+  park した窓を前面にして、`:reclaim-focus` が効くかを測る（ハーネスの前面操作とアダプタの前面操作を区別して記録）。アダプタは `:focus`／`:focus-none` を実行する前に「前面の窓が実際に画面外か」を確かめ、
+  画面上なら何もしない（ログ）。これで、park に失敗して画面上に残った窓（P-1 の破れ）をユーザーがクリックしたときに、フォーカスを奪わない。`[:window-surfaced id]`（再 park できない窓を可視へ移す）は別の項目として残す。
+- **D-7g その他**: 最小化の途中（ポーリングまでの最大 2 秒）に既知のまま `[:focus F]` が出ることは許容（害が小さい。R4b-L2）。`focus-none` の後の `focus-changed` は sink 窓の hwnd（未知の id＝管理外）で、
+  F12b により何も出ない。契約テストで `:os-focus` の値を記録する（R4b-L4）。P-1 は「タイマーと `:reclaim-focus` を流し切った後」の性質で、前面ロックで拒否されたとき（3 回で諦める）は正当に破れる。
+  フェイク OS のテストは、そのモデル（拒否するか）を入力に含める。
