@@ -72,7 +72,13 @@
   (guarded nil
            (fn []
              (def did (:GetWindowDesktopId (vdm*) (GetAncestor hwnd GA_ROOT)))
-             (when did (format-guid did)))))
+             # Jwno's own COM wrapper hands this back as an already formatted "{...}" string (it compares
+             # it to "{00000000-...}" in win.janet); formatting it again scrambled every id (contract test
+             # CT-12/14). Only a raw 16-byte buffer needs formatting.
+             (cond
+               (nil? did) nil
+               (string? did) (string/ascii-upper did)
+               (format-guid did)))))
 
 (defn- fullscreen? [hwnd style]
   # the app asked for it: no caption AND the window covers its whole monitor. (A window WE tiled to

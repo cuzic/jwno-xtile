@@ -375,3 +375,12 @@
                                           ["Alt + J" [:command :focus-next]]]}))
   (is= ["Alt + J"] (tuple ;(map |($ 1) (calls-of w2 :define-key))))
   (is (find |(string/find "could not bind" (string ($ 1))) (w2 :logs))))
+
+(deftest "a window Jwno did not add to its tree (no frame) is not announced to the core"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (def orphan (table/setproto @{:hwnd (hw 8) :tags @{}} @{}))   # not registered: find-hwnd -> nil
+  ((get (w :hooks) :window-created) orphan :uia "x" {:id g1})
+  (flush! w)
+  (is (nil? (st/locate (state-of a) 8)))
+  (is (find |(string/find "not in Jwno's tree" (string ($ 1))) (w :logs))))

@@ -218,7 +218,14 @@
                           (merge (let [[ok c] (protect (:get_CachedClassName uia-win))] (if (and ok c) {:class c} {}))
                                  (let [[ok t] (protect (:get_CachedName uia-win))] (if (and ok t) {:title t} {})))))
                    (def facts (facts-of id (in win :hwnd)))
-                   (spawn (fn [] (dispatch! [:window-seen id facts tag])))))))
+                   (def hwnd (in win :hwnd))
+                   (spawn (fn []
+                            # :window-created fires BEFORE Jwno looks for a frame, and a window with no
+                            # frame (e.g. on a desktop that has no layout yet) is never added to the
+                            # tree. Only tell the core about windows Jwno actually manages now.
+                            (if (:find-hwnd wm hwnd)
+                              (dispatch! [:window-seen id facts tag])
+                              (log-fn :debug (string/format "window %q is not in Jwno's tree: not announced" id)))))))))
 
   (:add-hook hook-man :window-removed
              (fn [win]
