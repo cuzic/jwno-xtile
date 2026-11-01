@@ -17,7 +17,7 @@
            :fg nil               # foreground hwnd (struct) or nil
            :roots @{}            # ptr -> root ptr (default: itself)
            :guids @{}            # ptr -> desktop guid
-           :minimized @{} :hung @{} :zoomed @{} :mouse false :move-events @[] :move-cb nil :pump-throws false
+           :minimized @{} :hung @{} :refuse @{} :zoomed @{} :mouse false :move-events @[] :move-cb nil :pump-throws false
            :rects @{}            # ptr -> actual visible rect after a transform (default: as asked)
            :desktops @[]         # [index guid name]
            :refreshes 0
@@ -28,9 +28,10 @@
   (def win-proto
     @{:transform (fn [self rect tags wm]
                    (rec :transform ((self :hwnd) :ptr) rect (merge (self :tags) tags))
-                   (put (w :rects) ((self :hwnd) :ptr)
-                        (or (get (w :rects) ((self :hwnd) :ptr))
-                            {:left (rect :left) :top (rect :top) :right (rect :right) :bottom (rect :bottom)})))
+                   # an app that REFUSES keeps its rect (set (w :refuse) ptr); otherwise the move happens
+                   (unless (get (w :refuse) ((self :hwnd) :ptr))
+                     (put (w :rects) ((self :hwnd) :ptr)
+                          {:left (rect :left) :top (rect :top) :right (rect :right) :bottom (rect :bottom)})))
       :get-rect (fn [self no-frame]
                   (or (get (w :rects) ((self :hwnd) :ptr)) {:left 0 :top 0 :right 1 :bottom 1}))
       :set-focus (fn [self wm] (rec :window-set-focus ((self :hwnd) :ptr)) (put w :fg (self :hwnd)))
@@ -133,28 +134,28 @@
   (flush! w)
   (is= "1" (st/locate (state-of a) 7)))           # integer id, tag from the desktop
 
-(deftest "a window on a desktop we cannot map is never given to the core (and the cache is re-read once)"
+(deftest "ADR 0006 D-4: a window on another Windows virtual desktop is not given to the core"
   (def w (fake-world))
-  (put w :desktops @[[1 g1 nil]])
+  (put (w :wm) :last-vd g1)                         # we are on desktop 1
+  (def a (install-adapter w))
+  (def here ((w :add-window!) 7 g1))
+  (def there ((w :add-window!) 8 g2))
+  ((get (w :hooks) :window-created) here :uia "x" {:id g1})
+  ((get (w :hooks) :window-created) there :uia "x" {:id g2})
+  (flush! w)
+  (is= "1" (st/locate (state-of a) 7))
+  (is (nil? (st/locate (state-of a) 8)))
+  (is= [7] (tuple ;(map first ((a :enumerate))))))
+
+(deftest "ADR 0006 D-4: with no virtual desktop ever created, every window is ours"
+  (def w (fake-world))                               # :last-vd stays nil
   (def a (install-adapter w))
   (def win ((w :add-window!) 7 g2))
-  ((get (w :hooks) :window-created) win :uia "x" {:id g2 :name :default})
-  (is= 0 (length (w :pending)))                   # not even an event: the core is never told
+  ((get (w :hooks) :window-created) win :uia "x" {:id g2})
+  ((get (w :hooks) :window-created) ((w :add-window!) 8) :uia "x" nil)   # no desktop info at all
   (flush! w)
-  (is (nil? (st/locate (state-of a) 7)))
-  (is= 1 (w :refreshes))
-  # desktop 10 and beyond: no tag exists
-  (def w2 (fake-world))
-  (put w2 :desktops (array/concat @[] (seq [i :range [1 11]] [i (string "{G" i "}") nil])))
-  (def a2 (install-adapter w2))
-  (is= "9" ((a2 :tag-of-guid) "{G9}"))
-  (is= :unmappable ((a2 :tag-of-guid) "{G10}"))
-  (is (nil? ((a2 :tag-of-guid) nil))))
-
-(deftest "no desktops created yet: everything is workspace 1"
-  (def w (fake-world))
-  (def a (install-adapter w))
-  (is= "1" ((a :tag-of-guid) "{ANY}")))
+  (is= "1" (st/locate (state-of a) 7))
+  (is= "1" (st/locate (state-of a) 8)))
 
 (deftest "ids: pointer-like hwnds become integers, GA_ROOT is applied, dead windows become nil"
   (def w (fake-world))
@@ -214,6 +215,7 @@
   (def win ((w :add-window!) 4 g1))
   ((get (w :hooks) :window-created) win :uia "x" {:id g1})
   (flush! w)
+  (put (w :refuse) 4 true)
   (put (w :rects) 4 {:left 0 :top 0 :right 100 :bottom 50})   # the app refused the size
   ((get (a :ctx) :place) 4 {:x 10 :y 20 :w 300 :h 200})
   (is= 1 (length (w :pending)))
@@ -226,7 +228,9 @@
   (def a (install-adapter w))
   (is (not (first (protect ((get (a :ctx) :place) 99 {:x 0 :y 0 :w 1 :h 1})))))
   (is (not (first (protect ((get (a :ctx) :focus) 99)))))
-  (is (not (first (protect ((get (a :ctx) :goto) "2"))))))
+  # goto / send are no-ops at the OS level now (hide/show do the work)
+  (is (first (protect ((get (a :ctx) :goto) "2"))))
+  (is (first (protect ((get (a :ctx) :send) 4 "2")))))
 
 (deftest "focus uses the WINDOW's set-focus, never wm's (which A suppresses)"
   (def w (fake-world))
@@ -271,27 +275,34 @@
   (:desktop-name-changed (w :wm) "x")
   (is= 1 (length (calls-of w :wm-set-focus))))
 
-(deftest "virtual-desktop-changed: tag, or the reserved empty workspace when we cannot map it"
+(deftest "virtual-desktop-changed: the managed set is re-synced to the new desktop (the old one's windows leave)"
   (def w (fake-world))
-  (put w :desktops @[[1 g1 nil] [2 g2 nil]])
+  (put (w :wm) :last-vd g1)
   (def a (install-adapter w))
+  (def on1 ((w :add-window!) 4 g1))
+  ((get (w :hooks) :window-created) on1 :uia "x" {:id g1})
+  (flush! w)
+  (is= "1" (st/locate (state-of a) 4))
+  # the user moves to desktop 2, where window 5 lives
+  (put (w :wm) :last-vd g2)
+  ((w :add-window!) 5 g2)
   ((get (w :hooks) :virtual-desktop-changed) g2 "Desktop 2" nil)
   (flush! w)
-  (is= "2" ((state-of a) :current))
-  ((get (w :hooks) :virtual-desktop-changed) "{UNKNOWN}" "?" nil)
-  (flush! w)
-  (is= "0" ((state-of a) :current)))
+  (is (nil? (st/locate (state-of a) 4)))
+  (is= "1" (st/locate (state-of a) 5)))
 
-(deftest "start: the core's current workspace follows the OS before windows are observed (N1)"
+(deftest "start: observes the existing windows, warns about several desktops, and schedules the poll"
   (def w (fake-world))
   (put w :desktops @[[1 g1 nil] [2 g2 nil]])
-  ((w :add-window!) 4 g2)
   (put (w :wm) :last-vd g2)
+  ((w :add-window!) 4 g2)
+  ((w :add-window!) 5 g1)
   (def a (install-adapter w))
   ((a :start))
-  (is= "2" ((state-of a) :current))
-  (is= "2" (st/locate (state-of a) 4))
-  (is (find |(= 2 (first $)) (w :later))))        # polling is scheduled (besides the re-observation)
+  (is= "1" (st/locate (state-of a) 4))
+  (is (nil? (st/locate (state-of a) 5)))              # on the other desktop
+  (is (find |(string/find "more than one Windows virtual desktop" (string ($ 1))) (w :logs)))
+  (is (find |(= 2 (first $)) (w :later))))
 
 (deftest "poll: re-pins windows, replaces the snapshot, removes ghosts, keeps polling"
   (def w (fake-world))
@@ -321,9 +332,9 @@
   (put (w :roots) 2 :dead)                         # norm -> nil: skipped
   (def snap ((a :enumerate)))
   (is= [1 3] (tuple ;(map first snap)))
-  (is= "1" ((first snap) 1))
-  # a window on a desktop we cannot map is left out of the snapshot (it would be a ghost to the core)
-  (put w :desktops @[[1 g1 nil]])
+  (is (nil? ((first snap) 1)))                       # the tag is the core's business (ADR 0006)
+  # a window on another virtual desktop is left out of the snapshot
+  (put (w :wm) :last-vd g1)
   ((w :add-window!) 4 g2)
   (is= [1 3] (tuple ;(map first ((a :enumerate))))))
 
@@ -518,3 +529,146 @@
   (def a (install-adapter w))
   ((a :start))
   (is (find |(= 0.1 (first $)) (w :later))))
+
+# ---- ADR 0006: workspaces by parking ------------------------------------------------------
+
+(defn last-transform [w id]
+  (last (filter |(and (= (first $) :transform) (= (get $ 1) id)) (w :calls))))
+
+(defn rect-of [w id] (get (w :rects) id))
+
+(deftest "ADR 0006: hide parks a window off-screen at its own size and remembers where it was; show brings it back"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})            # the window is at 100,50 300x300
+  ((get (a :ctx) :hide) 4)
+  (def r (rect-of w 4))
+  (is= -32000 (r :left))
+  (is= -32000 (r :top))
+  (is= 300 (- (r :right) (r :left)))                                       # same size
+  (is= {:rect {:x 100 :y 50 :w 300 :h 300} :at {:x -32000 :y -32000 :w 300 :h 300}} (get (a :parked) 4))
+  ((get (a :ctx) :show) 4)
+  (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4))
+  (is (nil? (get (a :parked) 4)))
+  ((get (a :ctx) :show) 4)                                                 # showing a window that is not parked is harmless
+  (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4)))
+
+(deftest "ADR 0006: hiding twice keeps the ORIGINAL position (a :refresh re-asserts hides)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 4)
+  ((get (a :ctx) :hide) 4)
+  ((get (a :ctx) :show) 4)
+  (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4)))
+
+(deftest "ADR 0006: placing or focusing a parked window brings it back first"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 4)
+  ((get (a :ctx) :place) 4 {:x 10 :y 20 :w 200 :h 100})
+  (is (nil? (get (a :parked) 4)))
+  (is= {:left 10 :top 20 :right 210 :bottom 120} (rect-of w 4))
+  ((get (a :ctx) :hide) 4)
+  ((get (a :ctx) :focus) 4)
+  (is (nil? (get (a :parked) 4)))
+  (is (> ((rect-of w 4) :left) -30000)))
+
+(deftest "ADR 0006: a minimised window is not parked (Jwno would skip it, and it is not on screen anyway)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :minimized) 4 true)
+  (array/clear (w :calls))
+  ((get (a :ctx) :hide) 4)
+  (is= 0 (length (calls-of w :transform)))
+  (is (nil? (get (a :parked) 4))))
+
+(deftest "ADR 0006: the poll parks a window again if an app moved itself back on-screen, without telling the core"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 4)
+  (put (w :rects) 4 {:left 640 :top 480 :right 940 :bottom 780})           # the app restored its saved position
+  (array/clear (w :calls))
+  ((a :poll-once))
+  (is (< ((rect-of w 4) :left) -30000))                                    # parked again
+  (is (not (find |(and (= (first $) :transform) (not= (get $ 1) 4)) (w :calls)))))
+
+(deftest "ADR 0006 H1: shutting down brings every parked window back; nothing is left off-screen"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  (put (w :rects) 5 {:left 500 :top 60 :right 800 :bottom 360})
+  ((get (a :ctx) :hide) 4)
+  ((get (a :ctx) :hide) 5)
+  ((get (w :hooks) :shutting-down))
+  (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4))
+  (is= {:left 500 :top 60 :right 800 :bottom 360} (rect-of w 5))
+  (is= 0 (length (keys (a :parked)))))
+
+(deftest "ADR 0006 H1: start recovers windows a previous run left off-screen"
+  (def w (fake-world))
+  (def stray ((w :add-window!) 4 g1))
+  (put (w :rects) 4 {:left -32000 :top -32000 :right -31700 :bottom -31700})   # left behind by a crash
+  (def fine ((w :add-window!) 5 g1))
+  (put (w :rects) 5 {:left 100 :top 50 :right 400 :bottom 350})
+  (def a (install-adapter w))
+  ((a :start))
+  (is (> ((rect-of w 4) :left) -30000))
+  (is= 0 ((rect-of w 4) :left))                                            # at the work area's origin
+  (is (> ((rect-of w 5) :left) -30000))                                    # the core tiles it as usual
+  # only the stray was recovered, not the window that was fine
+  (is= 1 (length (filter |(string/find "recovering window" (string ($ 1))) (w :logs)))))
+
+(deftest "ADR 0006: goto parks the old workspace and brings the other one back, end to end"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  ((a :norm) (hw 6))                                        # let the adapter know window 6 (it lives on workspace 2)
+  ((w :add-window!) 6 g1)
+  ((a :enumerate))
+  (rt/dispatch (a :rt) [:window-opened 6 "2"])              # opened while we look at workspace 1: hidden at once
+  (is (< ((rect-of w 6) :left) -30000))
+  (def p4 (rect-of w 4))
+  (rt/dispatch (a :rt) [:command :goto "2"])
+  (is (< ((rect-of w 4) :left) -30000))                     # workspace 1 is parked ...
+  (is (< ((rect-of w 5) :left) -30000))
+  (is (> ((rect-of w 6) :left) -30000))                     # ... and 2 is on screen
+  (rt/dispatch (a :rt) [:command :goto "1"])
+  (is (> ((rect-of w 4) :left) -30000))
+  (is (> ((rect-of w 5) :left) -30000))
+  (is (< ((rect-of w 6) :left) -30000))
+  (is (not (nil? p4))))
+
+(deftest "ADR 0006: a floating window comes back to where it was after its workspace was away"
+  (def w (fake-world))
+  (def a (install-adapter w {:rules [{:match {:class "#32770"} :action :float}]}))
+  (def dlg ((w :add-window!) 4 g1))
+  (def uia @{:get_CachedClassName (fn [self] "#32770") :get_CachedName (fn [self] "Save As")})
+  ((get (w :hooks) :window-created) dlg uia "x" {:id g1})
+  (flush! w)
+  (is (st/floating? (state-of a) 4))
+  (put (w :rects) 4 {:left 300 :top 200 :right 700 :bottom 500})            # where the user keeps it
+  (rt/dispatch (a :rt) [:window-opened 9 "2"])
+  (rt/dispatch (a :rt) [:command :goto "2"])                                 # nothing to focus there: still switches
+  (rt/dispatch (a :rt) [:command :goto "1"])
+  (is= {:left 300 :top 200 :right 700 :bottom 500} (rect-of w 4)))
+
+(deftest "ADR 0006: a drag event for a parked window is ignored (it is off-screen; nobody dragged it)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  ((get (a :ctx) :hide) 4)
+  ((w :move-cb) (hw 4))
+  (pump-tick! a)
+  (is (not (st/floating? (state-of a) 4))))

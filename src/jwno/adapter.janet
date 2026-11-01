@@ -15,7 +15,7 @@
 #   :beep ()
 #   :swp-nomove-nosize         -> int               SWP_NOMOVE|SWP_NOSIZE
 #
-# opts: :tags :rules :poll-seconds (nil = off) :reassert? :log :spawn :later
+# opts: :tags :rules :poll-seconds (nil = off) :reassert? (default false) :log :spawn :later
 #       :suppress-focus? (A, default true) :keymap :bindings
 #
 # Rules this file keeps (each is a review finding of ADR 0010):
@@ -24,17 +24,20 @@
 #    overwritten (H1);
 #  * every id given to the core goes through `norm` (integer, GA_ROOT, NULL -> nil) (M-A);
 #  * no call into Jwno's vd-manager worker (it yields and retries for ~1.5s) from a hook or a port (M-B);
-#  * a window on a desktop we cannot map is never given to the core, and "unknown" (nil) is
-#    kept for really-unknown only (N2).
+#  * workspaces are the WM's own (ADR 0006): a window of another workspace is PARKED off-screen, not
+#    hidden, so it stays in the taskbar, in Jwno's tree and in `enumerate`; a window on another Windows
+#    virtual desktop is simply not ours (only the current desktop is managed).
 
 (import ../core/state :as st)
 (import ../core/keymap :as km)
 (import ../shell/runtime :as rt)
 
 (def default-tags
-  "Workspace 1..9 = virtual desktop 1..9; \"0\" is reserved: nothing is ever placed there, so
-  being on a desktop we cannot map shows the core an empty workspace."
-  (tuple "1" "2" "3" "4" "5" "6" "7" "8" "9" "0"))
+  "WM workspaces (ADR 0006). They are groups inside the WM, independent of Windows' virtual desktops."
+  (tuple "1" "2" "3" "4" "5" "6" "7" "8" "9"))
+
+(def park-x -32000)
+(def park-y -32000)
 
 (defn rect->jwno
   "Core {:x :y :w :h} -> Jwno {:left :top :right :bottom}. The right/bottom edges are exclusive."
@@ -85,30 +88,21 @@
     (unless win (errorf "window %q is not managed by Jwno" id))
     win)
 
-  # ---- virtual desktop <-> tag (read-only; ADR 0010 D8) ----------------------------------
+  # ---- virtual desktops: only the current one is managed (ADR 0006 D-4) -------------------
   (defn desktops [&opt refresh]
     (def [ok ds] (protect (:get-all-desktops vd-man refresh)))
     (if ok ds @[]))
 
-  (defn tag-of-guid
-    "guid -> tag | :unmappable | nil (no guid: really unknown)."
+  (defn on-current-desktop?
+    "A window on another Windows virtual desktop is not ours. Unknown (no desktop was ever created,
+    or the window has no desktop) counts as current."
     [guid]
-    (when guid
-      (def want (string/ascii-upper (string guid)))
-      (defn find-in [ds]
-        (find |(= want (string/ascii-upper (string ($ 1)))) ds))
-      (def ds (desktops))
-      (if (empty? ds)
-        "1"   # no desktop was ever created: the one default desktop
-        (let [hit (or (find-in ds) (find-in (desktops true)))
-              tag (and hit (string (hit 0)))]
-          (if (and tag (index-of tag tags)) tag :unmappable)))))
+    (def current (in wm :last-vd))
+    (or (nil? current) (nil? guid)
+        (= (string/ascii-upper (string current)) (string/ascii-upper (string guid)))))
 
-  (defn tag-for-event
-    "like tag-of-guid, but an unmappable desktop means the reserved empty workspace."
-    [guid]
-    (def t (tag-of-guid guid))
-    (if (= t :unmappable) "0" t))
+  # ---- parking: a window of another workspace is moved off-screen and remembered ----------
+  (def parked @{})   # id -> {:rect where it was :at where we put it}; OS-boundary memory, not WM state
 
   # ---- ports ------------------------------------------------------------------------------
   (defn work-area []
@@ -117,7 +111,34 @@
 
   (defn foreground [] (norm (w :foreground-hwnd)))
 
+  (defn visible-rect [win] (jwno->rect (:get-rect win true)))
+
+  (defn move-to
+    [win rect]
+    (:transform win (rect->jwno rect) @{:swp-flags 0} wm))
+
+  (defn hide
+    "ADR 0006: leave the visible workspace. Remember where the window was, then park it off-screen
+    at its own size. A window that is already parked is parked again (a :refresh re-asserts it)."
+    [id]
+    (def win (window-of id))
+    (def hwnd (get num->hwnd id))
+    (unless (w :minimized? hwnd)
+      (def prev (get parked id))
+      (def rect (if prev (prev :rect) (visible-rect win)))
+      (def at {:x park-x :y park-y :w (rect :w) :h (rect :h)})
+      (move-to win at)
+      (put parked id {:rect rect :at at})))
+
+  (defn unpark
+    "Put a parked window back where it was (a tile is placed again right after; a float stays there)."
+    [id]
+    (when-let [p (get parked id)]
+      (put parked id nil)
+      (move-to (window-of id) (p :rect))))
+
   (defn place [id rect]
+    (put parked id nil)         # being placed supersedes being parked
     (def win (window-of id))
     (:transform win (rect->jwno rect) @{:swp-flags 0} wm)
     # Jwno swallows transform failures: read the result back and, if it differs, hand the
@@ -145,13 +166,10 @@
                 id (do (set step :norm) (norm hwnd))]
             (when id
               (set step :desktop-guid)
-              (def guid (w :desktop-guid hwnd))
-              (set step :tag)
-              (def tag (tag-of-guid guid))
-              (unless (= tag :unmappable)
+              (when (on-current-desktop? (w :desktop-guid hwnd))
                 (put fresh id (get num->hwnd id))
                 (set step :facts)
-                [id tag (facts-of id hwnd)])))))
+                [id nil (facts-of id hwnd)])))))
       (if ok
         (when entry (array/push out entry))
         (log-fn :warn (string "enumerate: skipped a window (step " step ", hwnd " (in win :hwnd) "): " entry))))
@@ -165,21 +183,23 @@
     @{:place place
       :focus (fn [id]
               (log-fn :debug (string/format "port-focus id=%q" id))
+              (unpark id)                       # a parked window cannot be focused usefully
               (:set-focus (window-of id) wm))   # the WINDOW's :set-focus, never wm's (A-2)
       :close (fn [id] (:close (window-of id)))
-      :goto (fn [_] (error "goto is not supported in stage 1"))
-      :send (fn [_ _] (error "send is not supported in stage 1"))
+      :hide hide
+      :show unpark
+      :goto (fn [_] nil)            # hide/show do the work (ADR 0006 D-1); nothing to do at the OS level
+      :send (fn [_ _] nil)
       :foreground foreground
       :foreground-is? (fn [id] (and id (= id (foreground))))
       :enumerate enumerate
       :work-area work-area
-      :current-desktop (fn [] (tag-for-event (in wm :last-vd)))
       :later later
       :log log-fn
       :notify (fn [kind id]
                 (when (= kind :ignored-close) (w :beep))
                 (log-fn :info (string "notify " kind " " id)))
-      :reassert? (get opts :reassert? true)})
+      :reassert? (get opts :reassert? false)})   # R-10 answered a Jwno refocus after an OS desktop switch; :goto no longer causes one
 
   # ---- core state + runtime ---------------------------------------------------------------
   (set rtm (rt/make ctx (st/make (work-area) tags (get opts :rules []))))
@@ -216,9 +236,9 @@
                (pin! win)
                (def id (norm (in win :hwnd)))
                (when id
-                 (def tag (when desktop-info (tag-of-guid (in desktop-info :id))))
-                 (log-fn :debug (string/format "window-created id=%q desktop-info=%q tag=%q" id desktop-info tag))
-                 (unless (= tag :unmappable)
+                 (def here? (on-current-desktop? (when desktop-info (in desktop-info :id))))
+                 (log-fn :debug (string/format "window-created id=%q desktop-info=%q current-desktop=%q" id desktop-info here?))
+                 (when here?
                    (put extras id
                         (table/to-struct
                           (merge (let [[ok c] (protect (:get_CachedClassName uia-win))] (if (and ok c) {:class c} {}))
@@ -230,7 +250,7 @@
                             # frame (e.g. on a desktop that has no layout yet) is never added to the
                             # tree. Only tell the core about windows Jwno actually manages now.
                             (if (:find-hwnd wm hwnd)
-                              (dispatch! [:window-seen id facts tag])
+                              (dispatch! [:window-seen id facts])
                               (log-fn :debug (string/format "window %q is not in Jwno's tree: not announced" id)))))))))
 
   (:add-hook hook-man :window-removed
@@ -238,6 +258,7 @@
                (def n (w :hwnd->number (in win :hwnd)))   # the window may already be dead: no GA_ROOT
                (put num->hwnd n nil)
                (put extras n nil)
+               (put parked n nil)
                (spawn (fn [] (dispatch! [:window-closed n])))))
 
   (:add-hook hook-man :focus-changed
@@ -245,10 +266,10 @@
                (def id (norm hwnd))
                (spawn (fn [] (dispatch! [:focus-changed id])))))
 
+  # Windows' own virtual desktop changed: the managed windows are now another set (ADR 0006 D-4).
   (:add-hook hook-man :virtual-desktop-changed
-             (fn [guid & _]
-               (def tag (tag-for-event guid))
-               (when tag (spawn (fn [] (dispatch! [:desktop-changed tag]))))))
+             (fn [& _]
+               (spawn (fn [] (dispatch! [:windows-observed (enumerate)])))))
 
   (:add-hook hook-man :monitor-updated
              (fn [top-frame]
@@ -276,8 +297,6 @@
           (when (and (not= 0 n) (get num->hwnd n))
             (array/push drag-queue n))))))
 
-  (defn visible-rect [win] (jwno->rect (:get-rect win true)))
-
   (defn drain-drags
     "Tell the core about the drags that ended, in OUR fiber (not in the callback). The rect is read
     now, not when the callback fired, so a snap that follows the drop is already in it."
@@ -289,7 +308,7 @@
         (protect
           (let [hwnd (get num->hwnd id)
                 win (when hwnd (:find-hwnd wm hwnd))]
-            (when (and win (not (w :minimized? hwnd)))
+            (when (and win (not (w :minimized? hwnd)) (not (get parked id)))
               (def rect (visible-rect win))
               (log-fn :debug (string/format "window-dragged id=%q rect=%q" id rect))
               (dispatch! [:window-dragged id rect])))))
@@ -312,8 +331,16 @@
               (unwatch! (string "the pump failed 10 times, falling back to polling: " n))))))
     (drain-drags))
 
+  (defn restore-parked
+    "ADR 0006 H1: never leave a window off-screen behind us. Put every parked window back."
+    []
+    (each id (array ;(keys parked))
+      (def [ok err] (protect (unpark id)))
+      (unless ok (log-fn :warn (string "could not bring window " id " back: " err)))))
+
   (defn stop []
     (set stopped true)
+    (restore-parked)
     (when move-hook
       (protect (w :unwatch-moves move-hook))
       (set move-hook nil)))
@@ -343,11 +370,16 @@
             (let [win (:find-hwnd wm hwnd)]
               (when (and win (not (w :minimized? hwnd)) (not (w :hung? hwnd)))
                 (def rect (visible-rect win))
+                (if-let [p (get parked id)]
+                  # ours to keep parked: an app that moved itself back on-screen is parked again
+                  (when (> (rect :x) (+ park-x 2000))
+                    (log-fn :debug (string/format "re-parking id=%q found at %q" id rect))
+                    (move-to win (p :at)))
                 (if (w :zoomed? hwnd)
                   (do
                     (log-fn :debug (string/format "compare: id=%q is maximised, rect=%q: floating it" id rect))
                     (dispatch! [:window-dragged id rect]))
-                  (dispatch! [:window-moved id rect]))))))
+                  (dispatch! [:window-moved id rect])))))))
         (unless ok (log-fn :warn (string "compare " id ": " err))))))
 
   (defn poll-once []
@@ -380,19 +412,36 @@
           (unless ok (log-fn :warn (string "could not bind " key ": " err))))
         (log-fn :warn (string "binding rejected: " ;(built :errors))))))
 
+  (defn recover-strays
+    "A previous run may have died with windows parked off-screen: bring them back."
+    []
+    (def wa (work-area))
+    (each win (:get-all-windows (in wm :root))
+      (def [ok err]
+        (protect
+          (let [rect (visible-rect win)
+                id (norm (in win :hwnd))]
+            (when (and id (not (get parked id)) (< (rect :x) (+ park-x 2000)))
+              (log-fn :info (string/format "recovering window %q found off-screen at %q" id rect))
+              (move-to win {:x (wa :x) :y (wa :y) :w (min (rect :w) (wa :w)) :h (min (rect :h) (wa :h))})))))
+      (unless ok (log-fn :warn (string "recover: " err)))))
+
   (defn start
     "Hooks are already registered (R-7): sync, then start polling."
     []
+    (when (> (length (desktops)) 1)
+      (log-fn :warn "more than one Windows virtual desktop: only the current one is managed, and switching desktops resets the WM state of the windows (ADR 0006 D-4)"))
+    (recover-strays)
     (rt/start rtm)
     (schedule-pump)
     (schedule-poll))
 
   @{:rt rtm :ctx ctx :start start :poll-once poll-once :enumerate enumerate :norm norm
-    :tag-of-guid tag-of-guid :a-active? a-active? :work-area work-area
+    :a-active? a-active? :work-area work-area :parked parked
     :pump-tick pump-tick :stop stop})
 
 (defn install
-  "-> adapter table {:rt :start :poll-once :enumerate :norm :tag-of-guid :a-active? :ctx :pump-tick :stop}.
+  "-> adapter table {:rt :start :poll-once :enumerate :norm :a-active? :ctx :pump-tick :stop :parked}.
   Idempotent: a second call on the same context returns the first adapter (it would otherwise
   wrap Jwno's methods and register every hook twice)."
   [context win32 &opt opts]
