@@ -6,6 +6,15 @@ foreach ($f in "contract.log", "contract-console.log", "contract-jwno.log") {
   "===== $f"
   if (Test-Path $p) { Get-Content $p -Tail 25 | ForEach-Object { if ($_.Length -gt 240) { $_.Substring(0, 240) } else { $_ } } } else { "(missing)" }
 }
+"===== contract-jwno.log: first lines, and anything about config / errors"
+$jl = Join-Path $o "contract-jwno.log"
+if (Test-Path $jl) {
+  Get-Content $jl -TotalCount 12 | ForEach-Object { if ($_.Length -gt 200) { $_.Substring(0, 200) } else { $_ } }
+  "..."
+  Select-String -Path $jl -Pattern "config|error|warn|fail|fatal|Cannot|Unable" -CaseSensitive:$false | Select-Object -First 15 | ForEach-Object { $t = $_.Line; if ($t.Length -gt 240) { $t.Substring(0, 240) } else { $t } }
+}
+"===== is the config where we said?"
+Test-Path (Join-Path $Work "repo\spike\contract-config.janet")
 "===== jwno.exe"
 (Get-Item (Join-Path $Work "jwno.exe") -ErrorAction SilentlyContinue | Select-Object Length, LastWriteTime | Out-String).Trim()
 "===== running jwno: " + (@(Get-Process jwno -ErrorAction SilentlyContinue).Count)
