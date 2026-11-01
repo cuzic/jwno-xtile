@@ -1,1 +1,1 @@
-failed to pass|invalid-virtual|Window .* (managed|ignored)
+721368|5767682.*(focus|STATE)|port-focus|focus-changed
