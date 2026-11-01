@@ -128,14 +128,25 @@
       (def rect (if prev (prev :rect) (visible-rect win)))
       (def at {:x park-x :y park-y :w (rect :w) :h (rect :h)})
       (move-to win at)
-      (put parked id {:rect rect :at at})))
+      (put parked id {:rect rect :at at :hwnd hwnd})))
 
   (defn unpark
-    "Put a parked window back where it was (a tile is placed again right after; a float stays there)."
+    "Put a parked window back where it was (a tile is placed again right after; a float stays there).
+    Opus H1: this must not depend on `num->hwnd` (the CURRENT desktop's windows only) or on Jwno's tree:
+    the entry keeps the hwnd, and falls back to Jwno's tree-free `transform-hwnd`. The entry is dropped
+    only after the move worked, or when the window is gone."
     [id]
     (when-let [p (get parked id)]
-      (put parked id nil)
-      (move-to (window-of id) (p :rect))))
+      (def hwnd (or (get num->hwnd id) (p :hwnd)))
+      (cond
+        (or (nil? hwnd) (nil? (w :root-of hwnd)))
+        (put parked id nil)                       # the window is gone: nothing to bring back
+        true
+        (do
+          (if-let [win (and (get num->hwnd id) (:find-hwnd wm hwnd))]
+            (move-to win (p :rect))
+            (:transform-hwnd wm hwnd (rect->jwno (p :rect)) @{:swp-flags 0}))
+          (put parked id nil)))))
 
   (defn place [id rect]
     (put parked id nil)         # being placed supersedes being parked
@@ -429,20 +440,6 @@
           (unless ok (log-fn :warn (string "could not bind " key ": " err))))
         (log-fn :warn (string "binding rejected: " ;(built :errors))))))
 
-  (defn recover-strays
-    "A previous run may have died with windows parked off-screen: bring them back."
-    []
-    (def wa (work-area))
-    (each win (:get-all-windows (in wm :root))
-      (def [ok err]
-        (protect
-          (let [rect (visible-rect win)
-                id (norm (in win :hwnd))]
-            (when (and id (not (get parked id)) (< (rect :x) (+ park-x 2000)))
-              (log-fn :info (string/format "recovering window %q found off-screen at %q" id rect))
-              (move-to win {:x (wa :x) :y (wa :y) :w (min (rect :w) (wa :w)) :h (min (rect :h) (wa :h))})))))
-      (unless ok (log-fn :warn (string "recover: " err)))))
-
   (defn top-level-hwnds
     "Every top-level window UI Automation knows (the desktop's children), as Jwno hwnds. Empty when
     there is no UIA manager (the fake world of the unit tests)."
@@ -476,6 +473,35 @@
           (when (and (not (:find-hwnd (in wm :root) hwnd)) (on-current-desktop? hwnd))
             (:window-opened wm hwnd))))
       (unless ok (log-fn :debug (string "adopt-existing: " err)))))
+
+  (defn recover-strays
+    "A previous run may have died with windows parked off-screen: bring them back."
+    []
+    (def wa (work-area))
+    # Opus H1/M7: also windows Jwno does not manage now (another desktop, rejected by its filter): go by
+    # the OS, not by Jwno's tree. UNVERIFIED ON WINDOWS whether UIA lists other desktops' windows.
+    (when (get win32 :window-rect)
+      (each hwnd (top-level-hwnds)
+        (def [ok err]
+          (protect
+            (let [r (w :window-rect hwnd)]
+              (when (and r (< (r :left) (+ park-x 2000)) (not (w :minimized? hwnd)))
+                (log-fn :info (string/format "recovering unmanaged window found off-screen at %q" r))
+                (:transform-hwnd wm hwnd
+                                 {:left (wa :x) :top (wa :y)
+                                  :right (+ (wa :x) (min (- (r :right) (r :left)) (wa :w)))
+                                  :bottom (+ (wa :y) (min (- (r :bottom) (r :top)) (wa :h)))}
+                                 @{:swp-flags 0})))))
+        (unless ok (log-fn :warn (string "recover (os scan): " err)))))
+    (each win (:get-all-windows (in wm :root))
+      (def [ok err]
+        (protect
+          (let [rect (visible-rect win)
+                id (norm (in win :hwnd))]
+            (when (and id (not (get parked id)) (< (rect :x) (+ park-x 2000)))
+              (log-fn :info (string/format "recovering window %q found off-screen at %q" id rect))
+              (move-to win {:x (wa :x) :y (wa :y) :w (min (rect :w) (wa :w)) :h (min (rect :h) (wa :h))})))))
+      (unless ok (log-fn :warn (string "recover: " err)))))
 
   (defn start
     "Hooks are already registered (R-7): sync, then start polling."

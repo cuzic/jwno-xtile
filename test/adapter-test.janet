@@ -51,6 +51,11 @@
     @{:find-hwnd (fn [self hwnd] ((w :windows) (hwnd :ptr)))
       :enumerate-monitors (fn [self] [[{:work-area {:left 0 :top 0 :right 1000 :bottom 600}}] 0])
       :set-focus (fn [self node] (rec :wm-set-focus node))
+      :transform-hwnd (fn [self hwnd rect &opt tags]
+                        (rec :transform-hwnd (hwnd :ptr) rect)
+                        (unless (get (w :refuse) (hwnd :ptr))
+                          (put (w :rects) (hwnd :ptr)
+                               {:left (rect :left) :top (rect :top) :right (rect :right) :bottom (rect :bottom)})))
       :window-opened (fn [self hwnd] (rec :window-opened (hwnd :ptr)) ((w :add-window!) (hwnd :ptr)))
       :desktop-name-changed (fn [self name]
                               (rec :dnc name)
@@ -559,7 +564,7 @@
   (is= -32000 (r :left))
   (is= -32000 (r :top))
   (is= 300 (- (r :right) (r :left)))                                       # same size
-  (is= {:rect {:x 100 :y 50 :w 300 :h 300} :at {:x -32000 :y -32000 :w 300 :h 300}} (get (a :parked) 4))
+  (is= {:rect {:x 100 :y 50 :w 300 :h 300} :at {:x -32000 :y -32000 :w 300 :h 300} :hwnd {:ptr 4}} (get (a :parked) 4))
   ((get (a :ctx) :show) 4)
   (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4))
   (is (nil? (get (a :parked) 4)))
@@ -739,3 +744,29 @@
   ((a :start))
   (def opened (map |($ 1) (calls-of w :window-opened)))
   (assert (deep= opened @[6 7]) (string/format "opened %q logs %q" opened (w :logs))))
+
+(deftest "Opus H1: a parked window is brought back even when its desktop is not the current one any more"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 4)
+  # the user switches to another virtual desktop: enumerate no longer knows window 4
+  (put (w :guids) 4 "{A}")
+  (put w :desktop "{B}")
+  ((a :poll-once))
+  ((a :stop))                                                       # Jwno quits while on the other desktop
+  (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4))
+  (is (nil? (get (a :parked) 4))))
+
+(deftest "Opus H1: the parked entry of a destroyed window is dropped, not kept for ever"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 4)
+  (put (w :roots) 4 :dead)                                          # the window was destroyed
+  (put w :desktop "{B}") (put (w :guids) 4 "{A}")
+  ((a :poll-once))
+  ((a :stop))
+  (is (nil? (get (a :parked) 4))))
