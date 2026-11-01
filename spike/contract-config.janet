@@ -20,6 +20,14 @@
   (try (require path)
     ([e] (rec :import-error path (string e)) nil)))
 
+# Which jw32 functions exist in this build? (win32.janet looks the optional ones up by name)
+(use jw32/_winuser)
+(each name ["GetClassName" "GetClassNameW" "GetWindowText" "GetWindowTextW" "IsHungAppWindow"
+            "MessageBeep" "GetAncestor" "GetWindowLong" "GetWindow" "IsIconic" "IsWindowVisible"
+            "GetWindowRect" "MonitorFromWindow" "GetMonitorInfo" "SetWinEventHook" "GetForegroundWindow"
+            "GetWindowThreadProcessId" "IsZoomed" "GetWindowPlacement"]
+  (rec :jw32-has name (not (nil? (get (curenv) (symbol name))))))
+
 (def adapter-env (try-require "src/jwno/adapter"))
 (def w32-env (try-require "src/jwno/win32"))
 (def runtime-env (try-require "src/shell/runtime"))

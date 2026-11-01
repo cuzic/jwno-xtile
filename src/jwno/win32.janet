@@ -2,7 +2,7 @@
 # It can be loaded only inside Jwno on Windows. Every jw32 name below was read from Jwno 0.9.16's own
 # source where Jwno uses it (GetAncestor, GetWindow, GetWindowLong, IsIconic, IsWindowVisible,
 # GetForegroundWindow, GetWindowRect, MonitorFromWindow, GetMonitorInfo, CoCreateInstance); the rest
-# (GetClassName, GetWindowText, IsHungAppWindow, MessageBeep) are NOT used by Jwno and are guarded.
+# (GetClassName, GetWindowText, IsHungAppWindow, MessageBeep) are NOT used by Jwno: they are looked up by name at run time (a bare unknown symbol is a COMPILE error).
 # UNVERIFIED ON WINDOWS: no test loads this file yet (ADR 0010 stage 2).
 
 (use jw32/_winuser)
@@ -17,6 +17,12 @@
 (defn- num [x] (if (number? x) x (int/to-number x)))
 
 (defn- true? [x] (not= FALSE x))
+
+(defn- opt
+  "A jw32/Jwno function looked up by NAME at run time. Janet rejects an unknown symbol at compile
+  time, so a function this jw32 build does not have must not be written as a bare symbol."
+  [name]
+  (get-in (curenv) [(symbol name) :value]))
 
 (defn- guarded
   "Run f; if jw32 lacks the function or the call throws, return `fallback`."
@@ -51,9 +57,13 @@
 
 (defn minimized? [hwnd] (true? (IsIconic hwnd)))
 
-(defn hung? [hwnd] (guarded false (fn [] (true? (IsHungAppWindow hwnd)))))
+(defn hung? [hwnd]
+  (def f (opt "IsHungAppWindow"))
+  (if f (guarded false (fn [] (true? (f hwnd)))) false))
 
-(defn beep [] (guarded nil (fn [] (MessageBeep 0))))
+(defn beep []
+  (def f (opt "MessageBeep"))
+  (when f (guarded nil (fn [] (f 0)))))
 
 (defn desktop-guid
   "Synchronous and without Jwno's retry loop (which can block for ~1.5s). nil for windows that
@@ -83,8 +93,8 @@
   [hwnd]
   (def style (signed-to-unsigned-32 (GetWindowLong hwnd GWL_STYLE)))
   (def ex-style (signed-to-unsigned-32 (GetWindowLong hwnd GWL_EXSTYLE)))
-  {:class (guarded nil (fn [] (GetClassName hwnd)))
-   :title (guarded nil (fn [] (GetWindowText hwnd)))
+  {:class (let [f (opt "GetClassName")] (when f (guarded nil (fn [] (f hwnd)))))
+   :title (let [f (opt "GetWindowText")] (when f (guarded nil (fn [] (f hwnd)))))
    :exe (guarded nil (fn [] (util/get-hwnd-path hwnd)))
    :visible? (true? (IsWindowVisible hwnd))
    :minimized? (minimized? hwnd)
