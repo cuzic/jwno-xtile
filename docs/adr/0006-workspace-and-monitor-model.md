@@ -220,3 +220,13 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
   および外から来た `focus-changed`（Jwno のフック経由）からだけ。**L3**: `[:notify :stray-returned id]` は同じ id につき、状態が変わるまで 1 回だけ。
 - **スパイクの確認項目（R4c-L4。すべて unverified on Windows として結果を記録する）**: sink が前面になる／打鍵が捨てられる／ムーブフック無しでも応答する／日本語 IME が有効でも変換ウィンドウが出ない／
   `Alt+F4` で閉じない／Narrator の読み上げ／Jwno の束縛が sink の前面で効く／sink が前面のとき `focus-changed` に何が届くか（hwnd か nil か）。
+
+### 改訂 4e（2026-11-01。Opus の 4 回目の確認 R4d。既定の `:return` の経路は収束と判定。以下で opt-in の `:follow` と実装上の注意を直す）
+- **`:stray-own` は id を持つ（R4d-M1）**: 印は `{:id A}` とし、**A 以外の `focus-changed`**、または任意の `:command` でだけ下ろす（A 自身の観測では下ろさない）。sink の前面化が拒否・遅延して
+  A が前面のままでも、再観測からの `:reclaim-focus` が `:follow` で `goto` を出さず、自分の `goto 3` を打ち消さない。
+- **UI スレッドの handler は複製される**ので、sink の hwnd と前面化の結果は `:send-message` の戻り値で受け取る（`:post-message` では拒否が分からない）。ランタイムの `execute` とテストは、
+  印付き effect（`[:focus f :reclaim]`、`[:focus-none :reclaim]`）の形に合わせる。
+- 予約 (ii)（`:hide`／`:show` を含む effect の実行後の `:reclaim-focus`）は、4c で `goto` が `:os-focus` を保ち遷移の時点で `stray-focus` が出るので**冗長**。削る（試行の空費を避ける）。予約は (i) だけ。
+- スパイクで、Jwno のキーボードフックが低レベルフック（`WH_KEYBOARD_LL`）かを確かめる（sink が前面でも束縛が効く前提）。
+- 状態: 改訂 4（D-6 の補足、D-7、4c〜4e）は**設計としては収束**。sink 窓に関する前提（前面化・打鍵の破棄・応答・IME・束縛）は実装前のスパイクの結果次第で、すべて unverified on Windows。
+  Core 側（`stray-focus`、`:reclaim-focus`、`:stray-own`、`:reclaim-tries`）はスパイクに依存しないので先に実装できる。
