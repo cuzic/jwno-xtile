@@ -7,7 +7,7 @@ foreach ($f in "contract-jwno.log", "contract.log") {
   $p = Join-Path $o $f
   "===== $f"
   if (Test-Path $p) {
-    Get-Content $p | Where-Object { $_ -notmatch " STATE " -and $_ -notmatch "msg-wndproc|^\S+ \S+ \[debug\] (hwnd|msg|wparam|lparam) =" } |
-      Select-String -Pattern $pat | Select-Object -First 45 | ForEach-Object { $t = $_.Line; if ($t.Length -gt 230) { $t.Substring(0, 230) } else { $t } }
+    Get-Content $p | Where-Object { $_ $_ -notmatch "msg-wndproc|^\S+ \S+ \[debug\] (hwnd|msg|wparam|lparam) =" } |
+      Select-String -Pattern $pat | Select-Object -First 12 | ForEach-Object { $t = $_.Line; if ($t.Length -gt 400) { $t.Substring(0, 400) } else { $t } }
   }
 }
