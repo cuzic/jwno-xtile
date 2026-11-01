@@ -388,8 +388,9 @@
     (when (get opts :verify-placements? true) (compare-placements)))
 
   (defn schedule-poll []
-    (when poll-seconds
-      (later poll-seconds (fn [] (protect (poll-once)) (schedule-poll)))))
+    # not after stop: a timer that keeps re-arming itself keeps Janet's event loop (and so Jwno) alive
+    (when (and poll-seconds (not stopped))
+      (later poll-seconds (fn [] (unless stopped (protect (poll-once))) (schedule-poll)))))
 
   # ---- keys -------------------------------------------------------------------------------
   (defn jwno-key
@@ -444,7 +445,7 @@
 
   @{:rt rtm :ctx ctx :start start :poll-once poll-once :enumerate enumerate :norm norm
     :a-active? a-active? :work-area work-area :parked parked
-    :pump-tick pump-tick :stop stop})
+    :pump-tick pump-tick :stop stop :stopped? (fn [] stopped)})
 
 (defn install
   "-> adapter table {:rt :start :poll-once :enumerate :norm :a-active? :ctx :pump-tick :stop :parked}.

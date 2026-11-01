@@ -105,6 +105,7 @@
     (file/flush out)))
 
 (ev/spawn
-  (forever
+  # stops when the adapter has stopped: a forever-fiber would keep Jwno from exiting
+  (while (not (and xtile ((xtile :stopped?))))
     (ev/sleep 1)
     (try (dump-state) ([e] (rec :dump-error (string e))))))

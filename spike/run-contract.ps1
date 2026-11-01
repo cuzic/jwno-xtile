@@ -271,7 +271,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-20pre" ($(if ($tiles.Count -ge 3) { "PASS" } else { "FAIL" })) "precondition: three tiled windows on workspace 1" ($tiles.Keys -join ",")
   [void](Cmd ":xtile :goto 2")
   Check "CT-20a" ($(if (WaitFor { (Parked $i0) -and (Parked $i1) -and (Parked $i2) } 8) { "PASS" } else { "FAIL" })) "goto 2 parks all of workspace 1 off-screen (they stay windows, in the taskbar)" ("current=" + (State).current + " frames: " + ((@($i0,$i1,$i2) | ForEach-Object { (Frame ([IntPtr]::new([int64]$_))) -join "," }) -join " | "))
-  Check "CT-20b" ($(if ((State).current -eq "2") { "PASS" } else { "FAIL" })) "... and the core is on workspace 2" ("current=" + (State).current)
+  Check "CT-20b" ($(if (WaitFor { (State).current -eq "2" } 4) { "PASS" } else { "FAIL" })) "... and the core is on workspace 2" ("current=" + (State).current)
   $N7 = Launch; $i7 = Id $N7; $h7 = $N7.MainWindowHandle
   $okn = WaitFor { (Has $i7) } 10
   Start-Sleep 2

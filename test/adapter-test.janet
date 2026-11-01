@@ -687,3 +687,16 @@
   (is= "1" ((state-of a) :current))
   ((w :xtile-command) :focus-next)                 # other commands are untouched
   (is= "1" ((state-of a) :current)))
+
+(deftest "after stop nothing re-arms itself: Jwno must be able to exit (a self-rescheduling timer keeps the event loop alive)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  ((a :start))
+  (is (> (length (w :later)) 0))
+  ((get (w :hooks) :shutting-down))
+  (is ((a :stopped?)))
+  # whatever timers are still pending fire once more, and must not schedule anything new
+  (def pending (array ;(w :later)))
+  (array/clear (w :later))
+  (each [_ f] pending (f))
+  (is= 0 (length (w :later))))
