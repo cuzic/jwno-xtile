@@ -7,7 +7,7 @@ foreach ($f in "contract-jwno.log", "contract.log") {
   $p = Join-Path $o $f
   "===== $f"
   if (Test-Path $p) {
-    Get-Content $p | Select-String -Pattern $pat | Select-Object -First 200 | ForEach-Object {
+    Get-Content $p | Select-String -Pattern $pat -Context 14,2 | Select-Object -First 1 | ForEach-Object { $_.Context.PreContext | ForEach-Object { if ($_.Length -gt 300) { $_.Substring(0,300) } else { $_ } };
       $t = $_.Line; if ($t.Length -gt 400) { $t.Substring(0, 400) } else { $t } }
   }
 }
