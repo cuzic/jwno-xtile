@@ -104,15 +104,18 @@
 (defn facts
   "classify's facts (ADR 0008). Win32 only -- no UIA, because the poll calls this for every window."
   [hwnd]
-  (def style (unsigned-32 (GetWindowLong hwnd GWL_STYLE)))
-  (def ex-style (unsigned-32 (GetWindowLong hwnd GWL_EXSTYLE)))
+  # jw32's GetWindowLong throws "out of range for 32-bit signed integers" for a window whose style has
+  # bit 31 set (WS_POPUP: menus, many dialogs) -- seen in the contract test log. Such a window is still
+  # reported; only the two style-derived facts become "unknown" (false).
+  (def style (guarded nil (fn [] (unsigned-32 (GetWindowLong hwnd GWL_STYLE)))))
+  (def ex-style (guarded nil (fn [] (unsigned-32 (GetWindowLong hwnd GWL_EXSTYLE)))))
   # :class and :title are NOT here: this jw32 has no GetClassName/GetWindowText (contract test CT-1).
   # The adapter reads them from the UIA element in the :window-created hook.
   {:exe (guarded nil (fn [] (util/get-hwnd-path hwnd)))
    :visible? (true? (IsWindowVisible hwnd))
    :minimized? (minimized? hwnd)
-   :fullscreen? (fullscreen? hwnd style)
-   :tool-window? (not (zero? (band ex-style ws-ex-toolwindow)))
+   :fullscreen? (and style (fullscreen? hwnd style))
+   :tool-window? (and ex-style (not (zero? (band ex-style ws-ex-toolwindow))))
    :owned? (let [owner (GetWindow hwnd GW_OWNER)]
              # jw32 returns a NULL pointer, not nil, for "no owner" (Jwno itself tests `null?`)
              (not (or (nil? owner) (null? owner))))})

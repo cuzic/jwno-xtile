@@ -167,6 +167,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-13b" ($(if (($supp2 - $supp1) -eq 1) { "PASS" } else { "FAIL" })) "A: exactly one wm :set-focus was swallowed by that switch" "suppressed $supp1 -> $supp2"
   $t1 = (Win $i1).tag; $t2 = (Win $i2).tag
   Check "CT-14" ($(if ($t1 -eq "1" -and $t2 -eq "1" -and (Has $i3) -and (Win $i3).tag -eq "2") { "PASS" } else { "FAIL" })) "the desktop round trip kept every window's workspace (and desktop 2's window is still known)" "tags: n1=$t1 n2=$t2 n3=$((Win $i3).tag)"
+  Check "CT-16" ($(if ((Count 'skipped a window') -eq 0) { "PASS" } else { "FAIL" })) "the poll never drops a window because reading its facts failed" ((LogLines | Where-Object { $_ -match 'skipped a window' } | Select-Object -First 2) -join " | ")
   Check "CT-15" "INFO" "foreground after returning (the OS's own choice, since Jwno's refocus is suppressed)" ("fg=" + [C]::GetForegroundWindow().ToInt64() + " ids=$i0,$i1,$i2,$i3")
 }
 

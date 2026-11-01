@@ -25,7 +25,8 @@
 (each name ["GetClassName" "GetClassNameW" "GetWindowText" "GetWindowTextW" "IsHungAppWindow"
             "MessageBeep" "GetAncestor" "GetWindowLong" "GetWindow" "IsIconic" "IsWindowVisible"
             "GetWindowRect" "MonitorFromWindow" "GetMonitorInfo" "SetWinEventHook" "GetForegroundWindow"
-            "GetWindowThreadProcessId" "IsZoomed" "GetWindowPlacement"]
+            "GetWindowThreadProcessId" "IsZoomed" "GetWindowPlacement"
+            "GetWindowLongPtr" "GetWindowLongPtrW" "GetWindowLongW" "GetWindowLongA" "SetWindowLongPtr"]
   (rec :jw32-has name (not (nil? (get (curenv) (symbol name))))))
 
 (def adapter-env (try-require "src/jwno/adapter"))
