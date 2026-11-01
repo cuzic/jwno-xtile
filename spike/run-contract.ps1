@@ -69,7 +69,9 @@ function DragTitleBar($h, $dx, $dy) {
 }
 function FocusConfirmed($h, $id) {
   for ($try = 0; $try -lt 4; $try++) {
-    Focus $h
+    # SetForegroundWindow is sometimes refused on the hosted runner (foreground lock); a real click on the
+    # title bar always gives the window the foreground, so use it from the third try on.
+    if ($try -ge 2) { ClickTitleBar $h } else { Focus $h }
     if (WaitFor { (State).os_focus -eq $id } 3) { return $true }
   }
   return $false
@@ -161,27 +163,32 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
     $d -le 1 } 8
   Check "CT-6c" ($(if ($want -and $backed) { "PASS" } else { "FAIL" })) "with no button down, the poll puts a window that was moved programmatically back at the core's rect" ("frame=" + ((Frame $h2) -join ",") + " want=" + ($want -join ","))
 
-  $pre = Win $i2
-  Check "CT-7pre" ($(if ($pre -and $pre.floating -eq $false) { "PASS" } else { "FAIL" })) "precondition: the window we are about to maximise is still a tile" ($pre | ConvertTo-Json -Compress)
-  # ---- maximize: the user's own action floats the tile (ADR 0010 D9 N3); it is not shrunk back ----
-  [void][C]::ShowWindow($h2, 3)
-  $okf = WaitFor { (Win $i2).floating -eq $true } 8
-  $z = [C]::IsZoomed($h2)
+  # A throwaway window, so that whatever this does to the layout cannot leak into the checks after it.
+  $N6 = Launch; $i6 = Id $N6; $h6 = $N6.MainWindowHandle
+  [void](WaitFor { Has $i6 } 10)
+  Start-Sleep 2
+  $pre = Win $i6
+  Check "CT-7pre" ($(if ($pre -and $pre.floating -eq $false) { "PASS" } else { "FAIL" })) "precondition: the window we are about to maximise is a tile" ($pre | ConvertTo-Json -Compress)
+  [void][C]::ShowWindow($h6, 3)
+  $okf = WaitFor { (Win $i6).floating -eq $true } 8
+  $z = [C]::IsZoomed($h6)
   Check "CT-7a" ($(if ($okf -and $z) { "PASS" } else { "FAIL" })) "a window the user maximised becomes floating within the poll, and stays maximised" "floating=$okf zoomed=$z"
   [void](Cmd "retile"); Start-Sleep 2
-  Check "CT-7b" "INFO" "Jwno's :retile on that floating, maximised window (its transform always un-maximises)" ("zoomed after retile=" + [C]::IsZoomed($h2))
-  [void][C]::ShowWindow($h2, 9); Start-Sleep 1
-  $foc = FocusConfirmed $h2 $i2
-  if ($foc) {
+  Check "CT-7b" "INFO" "Jwno's :retile on that floating, maximised window (its transform always un-maximises)" ("zoomed after retile=" + [C]::IsZoomed($h6))
+  [void][C]::ShowWindow($h6, 9); Start-Sleep 1
+  if (FocusConfirmed $h6 $i6) {
     [void](Cmd ":xtile :toggle-float")
-    $back = WaitFor { (Win $i2).floating -eq $false } 6
+    $back = WaitFor { (Win $i6).floating -eq $false } 6
     Start-Sleep 2
-    $f = Frame $h2; $want = (Win $i2).rect
+    $f = Frame $h6; $want = (Win $i6).rect
     $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
-    Check "CT-7c" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float puts it back into the tiling at the core's rect" ("floating=" + (Win $i2).floating + " frame=" + ($f -join ",") + " want=" + ($want -join ","))
+    Check "CT-7c" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float puts it back into the tiling at the core's rect" ("floating=" + (Win $i6).floating + " frame=" + ($f -join ",") + " want=" + ($want -join ","))
   } else {
-    Check "CT-7c" "FAIL" "toggle-float puts it back into the tiling (precondition: focus reached the window)" ("os_focus=" + (State).os_focus + " want=$i2")
+    Check "CT-7c" "FAIL" "toggle-float puts it back into the tiling (precondition: focus reached the window)" ("os_focus=" + (State).os_focus + " want=$i6")
   }
+  Stop-Process -Id $N6.Id -Force
+  Check "CT-7d" ($(if (WaitFor { -not (Has $i6) } 10) { "PASS" } else { "FAIL" })) "the throwaway window leaves the core when it is closed" "id=$i6"
+  Start-Sleep 3
 
   # ---- the user's mouse: a title-bar click floats nothing, a drag floats the tile where it was dropped ----
   $h0 = $N0.MainWindowHandle
@@ -206,13 +213,16 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
     for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $w.rect[$k])) }
     $worst = [math]::Max($worst, $d); $diffs += ("{0}: core=[{1}] actual=[{2}]" -f $w.id, ($w.rect -join ","), ($f -join ",")) } }
   Check "CT-17e" ($(if ($worst -le 1 -and $diffs.Count -gt 0) { "PASS" } else { "FAIL" })) "the remaining tiles were re-tiled around it (worst diff $worst px)" ($diffs -join " | ")
-  [void](FocusConfirmed $h1 $i1)
-  [void](Cmd ":xtile :toggle-float")
-  $back = WaitFor { (Win $i1).floating -eq $false } 6
-  Start-Sleep 2
-  $f = Frame $h1; $want = (Win $i1).rect
-  $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
-  Check "CT-17f" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float returns the dragged window to the tiling" ("frame=" + ($f -join ",") + " want=" + ($want -join ","))
+  if (FocusConfirmed $h1 $i1) {
+    [void](Cmd ":xtile :toggle-float")
+    $back = WaitFor { (Win $i1).floating -eq $false } 6
+    Start-Sleep 2
+    $f = Frame $h1; $want = (Win $i1).rect
+    $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
+    Check "CT-17f" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float returns the dragged window to the tiling" ("frame=" + ($f -join ",") + " want=" + ($want -join ","))
+  } else {
+    Check "CT-17f" "FAIL" "toggle-float returns the dragged window to the tiling (precondition: focus reached the window)" ("os_focus=" + (State).os_focus + " want=$i1")
+  }
 
   # ---- polling: minimize / restore reach the core ----
   $h1 = $N1.MainWindowHandle
@@ -259,7 +269,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-15" "INFO" "foreground after returning (the OS's own choice, since Jwno's refocus is suppressed)" ("fg=" + [C]::GetForegroundWindow().ToInt64() + " ids=$i0,$i1,$i2,$i3")
 }
 
-foreach ($p in @($N0, $N1, $N2, $N3)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+foreach ($p in @($N0, $N1, $N2, $N3, $N6)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
 if (-not $j.HasExited) { Stop-Process -Id $j.Id -Force }
 
 $results | ConvertTo-Json -Depth 4 | Out-File -Encoding utf8 (Join-Path $Out "contract-results.json")
