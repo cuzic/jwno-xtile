@@ -1,6 +1,6 @@
 # 0006. ワークスペースの実装方式とモニタモデル
 
-- 状態: Accepted（改訂 3: 案 2 に決定。Opus レビュー 1 回の High 3・Med 5 を反映。Core の hide/show・アダプタの park・回復を実装し、ホスト型 Windows の契約テスト 45 項目で検証済み。実機（Windows 10/11）は未検証。Opus の実装後の再確認は未実施）
+- 状態: Accepted（改訂 3: 案 2 に決定。Opus レビュー 1 回の High 3・Med 5 を反映。Core の hide/show・アダプタの park・回復を実装し、ホスト型 Windows（Server 2022 と Server 2025）の契約テスト 45 項目で検証済み。実機（Windows 10/11）は未検証。Opus の実装後の再確認は未実施）
 - 日付: 2026-10-31
 
 ## Context
