@@ -342,3 +342,36 @@
   (is (find |(string/find "rejected" (string ($ 1))) (w :logs)))
   ((w :xtile-command) :focus-next)                # runs the core command
   (is a))
+
+(deftest "class and title come from the hook's UIA element (jw32 has no GetClassName) and are remembered for the poll"
+  (def w (fake-world))
+  (def a (install-adapter w {:rules [{:match {:class "#32770"} :action :float}]}))
+  (def win ((w :add-window!) 4 g1))
+  (def uia @{:get_CachedClassName (fn [self] "#32770") :get_CachedName (fn [self] "Save As")})
+  ((get (w :hooks) :window-created) win uia "x" {:id g1})
+  (flush! w)
+  (is (st/floating? (state-of a) 4))                 # classified by the class we read from UIA
+  (def snap ((a :enumerate)))
+  (is= "#32770" (((first snap) 2) :class))           # the poll does not lose it
+  (is= "Save As" (((first snap) 2) :title))
+  # a broken UIA element must not stop the window from being managed
+  (def win2 ((w :add-window!) 5 g1))
+  ((get (w :hooks) :window-created) win2 :not-an-element "x" {:id g1})
+  (flush! w)
+  (is= "1" (st/locate (state-of a) 5)))
+
+(deftest "key bindings: Core's key names are translated to Jwno's, and one bad key does not stop the rest"
+  (def w (fake-world))
+  (def a (install-adapter w {:keymap (w :keymap)
+                             :bindings [["Alt + Comma" [:command :inc-master]]
+                                        ["Alt + Shift + Period" [:command :dec-master]]
+                                        ["Alt + J" [:command :focus-next]]]}))
+  (is= ["Alt + ," "Alt + Shift + ." "Alt + J"] (tuple ;(map |($ 1) (calls-of w :define-key))))
+  # Jwno refusing a key must be survivable
+  (def w2 (fake-world))
+  (put (w2 :keymap) :define-key (fn [self k cmd] (when (string/find "," k) (error "unknown key name")) (array/push (w2 :calls) [:define-key k cmd])))
+  (def a2 (install-adapter w2 {:keymap (w2 :keymap)
+                               :bindings [["Alt + Comma" [:command :inc-master]]
+                                          ["Alt + J" [:command :focus-next]]]}))
+  (is= ["Alt + J"] (tuple ;(map |($ 1) (calls-of w2 :define-key))))
+  (is (find |(string/find "could not bind" (string ($ 1))) (w2 :logs))))

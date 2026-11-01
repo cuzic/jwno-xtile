@@ -2,7 +2,7 @@
 # It can be loaded only inside Jwno on Windows. Every jw32 name below was read from Jwno 0.9.16's own
 # source where Jwno uses it (GetAncestor, GetWindow, GetWindowLong, IsIconic, IsWindowVisible,
 # GetForegroundWindow, GetWindowRect, MonitorFromWindow, GetMonitorInfo, CoCreateInstance); the rest
-# (GetClassName, GetWindowText, IsHungAppWindow, MessageBeep) are NOT used by Jwno: they are looked up by name at run time (a bare unknown symbol is a COMPILE error).
+# (IsHungAppWindow, MessageBeep) are NOT in this jw32 (contract test CT-1 listed it); they are looked up by name at run time (a bare unknown symbol is a COMPILE error) and the adapter lives without them.
 # UNVERIFIED ON WINDOWS: no test loads this file yet (ADR 0010 stage 2).
 
 (use jw32/_winuser)
@@ -93,9 +93,9 @@
   [hwnd]
   (def style (signed-to-unsigned-32 (GetWindowLong hwnd GWL_STYLE)))
   (def ex-style (signed-to-unsigned-32 (GetWindowLong hwnd GWL_EXSTYLE)))
-  {:class (let [f (opt "GetClassName")] (when f (guarded nil (fn [] (f hwnd)))))
-   :title (let [f (opt "GetWindowText")] (when f (guarded nil (fn [] (f hwnd)))))
-   :exe (guarded nil (fn [] (util/get-hwnd-path hwnd)))
+  # :class and :title are NOT here: this jw32 has no GetClassName/GetWindowText (contract test CT-1).
+  # The adapter reads them from the UIA element in the :window-created hook.
+  {:exe (guarded nil (fn [] (util/get-hwnd-path hwnd)))
    :visible? (true? (IsWindowVisible hwnd))
    :minimized? (minimized? hwnd)
    :fullscreen? (fullscreen? hwnd (num style))

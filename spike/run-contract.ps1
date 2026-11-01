@@ -72,6 +72,8 @@ Check "CT-1" ($(if ($started -and $imports.Count -eq 0 -and (Count ' installed')
 if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Write-Host "adapter did not start; skipping the rest"
 } else {
+  $binds = @(LogLines | Where-Object { $_ -match 'could not bind|binding rejected' })
+  Check "CT-1b" ($(if ($binds.Count -eq 0) { "PASS" } else { "FAIL" })) "every default key binding is accepted by Jwno's key parser" ($binds -join " | ")
   $inst = (LogLines | Where-Object { $_ -match ' installed ' } | Select-Object -First 1)
   Check "CT-2" ($(if ($inst -match 'true') { "PASS" } else { "FAIL" })) "self-diagnosis: both focus wrappers are in place (A active)" $inst
 

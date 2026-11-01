@@ -67,6 +67,7 @@
 
   # ---- ids: Core ids are integers; Jwno hwnds are pointers --------------------------------
   (def num->hwnd @{})
+  (def extras @{})   # id -> {:class :title}, read from UIA in the hook (jw32 has no GetClassName)
   (defn norm
     "pointer -> integer id, via GA_ROOT. nil for nil or a dead window (NULL would become 0)."
     [hwnd]
@@ -129,6 +130,11 @@
         (log-fn :debug (string/format "place mismatch id=%q want=%q actual=%q" id rect actual))
         (spawn (fn [] (dispatch! [:window-moved id actual]))))))
 
+  (defn facts-of
+    "Win32 facts plus what UIA told us when the window was created."
+    [id hwnd]
+    (table/to-struct (merge (w :facts hwnd) (get extras id {}))))
+
   (defn enumerate []
     (def fresh @{})
     (def out @[])
@@ -141,13 +147,14 @@
               (def tag (tag-of-guid (w :desktop-guid hwnd)))
               (unless (= tag :unmappable)
                 (put fresh id (get num->hwnd id))
-                [id tag (w :facts hwnd)])))))
+                [id tag (facts-of id hwnd)])))))
       (if ok
         (when entry (array/push out entry))
         (log-fn :warn (string "enumerate: skipped a window: " entry))))
     # replace, do not accumulate: windows whose :window-removed never came must not pile up
     (table/clear num->hwnd)
     (eachp [k v] fresh (put num->hwnd k v))
+    (eachk id extras (unless (get fresh id) (put extras id nil)))
     out)
 
   (def ctx
@@ -199,19 +206,24 @@
 
   # ---- hooks: copy the values now, dispatch after Jwno has finished (D3, D5) --------------
   (:add-hook hook-man :window-created
-             (fn [win _uia-win _exe-path desktop-info]
+             (fn [win uia-win _exe-path desktop-info]
                (pin! win)
                (def id (norm (in win :hwnd)))
                (when id
                  (def tag (when desktop-info (tag-of-guid (in desktop-info :id))))
                  (unless (= tag :unmappable)
-                   (def facts (w :facts (in win :hwnd)))
+                   (put extras id
+                        (table/to-struct
+                          (merge (let [[ok c] (protect (:get_CachedClassName uia-win))] (if (and ok c) {:class c} {}))
+                                 (let [[ok t] (protect (:get_CachedName uia-win))] (if (and ok t) {:title t} {})))))
+                   (def facts (facts-of id (in win :hwnd)))
                    (spawn (fn [] (dispatch! [:window-seen id facts tag])))))))
 
   (:add-hook hook-man :window-removed
              (fn [win]
                (def n (w :hwnd->number (in win :hwnd)))   # the window may already be dead: no GA_ROOT
                (put num->hwnd n nil)
+               (put extras n nil)
                (spawn (fn [] (dispatch! [:window-closed n])))))
 
   (:add-hook hook-man :focus-changed
@@ -242,13 +254,23 @@
       (later poll-seconds (fn [] (protect (poll-once)) (schedule-poll)))))
 
   # ---- keys -------------------------------------------------------------------------------
+  (defn jwno-key
+    "Core's key names -> Jwno's (its key table is lower-case and spells Comma/Period as , and .)."
+    [k]
+    (def parts (string/split " + " k))
+    (def last-part (last parts))
+    (def mapped (case (string/ascii-lower last-part) "comma" "," "period" "." last-part))
+    (string/join [;(slice parts 0 (- (length parts) 1)) mapped] " + "))
+
   (when-let [keymap (opts :keymap)]
     (:add-command (in context :command-manager) :xtile
                   (fn [& args] (dispatch! [:command ;args])))
     (each b (get opts :bindings [])
       (def built (km/build [b] tags))
       (if (empty? (built :errors))
-        (:define-key keymap (b 0) [:xtile ;(slice (b 1) 1)])
+        (let [key (jwno-key (b 0))
+              [ok err] (protect (:define-key keymap key [:xtile ;(slice (b 1) 1)]))]
+          (unless ok (log-fn :warn (string "could not bind " key ": " err))))
         (log-fn :warn (string "binding rejected: " ;(built :errors))))))
 
   (defn start
