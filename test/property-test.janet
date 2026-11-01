@@ -285,7 +285,8 @@
       (errorf "H-a :hide %q is not on a hidden workspace after %q" id event)))
   (each id hides
     # H-e: not again for a window that was already hidden (that is noise, and re-parks a window needlessly)
-    (unless (or (index-of id (vis-of old)) (not (index-of id old-all)))
+    # (:refresh is the exception: it re-asserts every hidden window on purpose, to re-park strays)
+    (unless (or (index-of id (vis-of old)) (not (index-of id old-all)) (= event [:command :refresh]))
       (errorf "H-e :hide %q was already hidden before %q" id event)))
   (each id shows
     # H-b: only windows that were on another workspace and are visible now
