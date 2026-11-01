@@ -22,6 +22,7 @@
 (rec :config-start)
 
 # ---- runs in the UI thread ------------------------------------------------------------
+(rec :step :start-defs)
 (defn sink-wndproc [hwnd msg wparam lparam]
   (cond
     # keys: swallowed (returned 0), and counted so the script can see they arrived HERE
@@ -34,6 +35,8 @@
       (DefWindowProc hwnd msg wparam lparam))
     (= msg WM_DESTROY) (do (rec :sink-destroyed) (DefWindowProc hwnd msg wparam lparam))
     (DefWindowProc hwnd msg wparam lparam)))
+
+(rec :step :wndproc-defined)
 
 (defn create-sink [_hwnd _msg _wparam _lparam _hook state]
   (def wc (WNDCLASSEX :lpfnWndProc sink-wndproc
@@ -53,6 +56,8 @@
       (rec :sink-created n)
       n)))
 
+(rec :step :create-defined)
+
 (defn front-sink [_hwnd _msg _wparam _lparam _hook state]
   (def h (in state :xtile-sink))
   (if (nil? h)
@@ -63,35 +68,46 @@
       (rec :sink-front ok (= (util/pointer-to-number fg) (util/pointer-to-number h)))
       (if ok 1 0))))
 
+(rec :step :front-defined)
+
 (defn destroy-sink [_hwnd _msg _wparam _lparam _hook state]
   (when-let [h (in state :xtile-sink)]
     (DestroyWindow h)
     (put state :xtile-sink nil))
   0)
 
+(rec :step :handlers-defined)
 # ---- runs in the main thread ----------------------------------------------------------
 (def ui-man (in jwno/context :ui-manager))
+(rec :step :ui-man (type ui-man))
 (def msgs @{})
 
 (defn ui-call [name handler]
   (put msgs name (:add-custom-message ui-man handler))
   (rec :msg-registered name (msgs name)))
 
-(def key-man (in jwno/context :key-manager))
-(def keymap (:new-keymap key-man))
-(:add-command (in jwno/context :command-manager) :sink-hotkey (fn [] (rec :hotkey-fired)))
-(:define-key keymap "Alt+Shift+F11" :sink-hotkey)
-(:set-keymap key-man keymap)
+(defmacro guard [name & body] ~(try (do ,;body) ([e] (rec :error ,name (string e)))))
+(guard :keymap
+  (def key-man (in jwno/context :key-manager))
+  (def keymap (:new-keymap key-man))
+  (:add-command (in jwno/context :command-manager) :sink-hotkey (fn [] (rec :hotkey-fired)))
+  (:define-key keymap "Alt+Shift+F11" :sink-hotkey)
+  (:set-keymap key-man keymap))
+(rec :step :keymap-done)
 
 # which window Jwno says has the focus (what the adapter's focus-changed hook would see)
-(:add-hook (in jwno/context :hook-manager) :focus-changed
-           (fn [hwnd] (rec :jwno-focus-changed (util/pointer-to-number hwnd))))
+(guard :hook
+  (:add-hook (in jwno/context :hook-manager) :focus-changed
+             (fn [hwnd] (rec :jwno-focus-changed (util/pointer-to-number hwnd)))))
+(rec :step :hook-done)
 
 (ev/spawn
   (ev/sleep 1.0)
-  (ui-call :create create-sink)
-  (ui-call :front front-sink)
-  (ui-call :destroy destroy-sink)
+  (guard :register
+    (ui-call :create create-sink)
+    (ui-call :front front-sink)
+    (ui-call :destroy destroy-sink))
+  (rec :step :registered)
   # create on the UI thread; the script (run-sink.ps1) asks for the rest with the REPL
   (def n (try (:send-message ui-man (msgs :create) 0 0) ([e] (rec :create-error (string e)) nil)))
   (rec :create-result n))

@@ -48,7 +48,7 @@ $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Pat
 $j = Start-Process -FilePath $Jwno -ArgumentList $jargs -PassThru
 $created = WaitFor { (Count 'sink-created') -gt 0 -or (Count 'sink-class-failed|sink-create-failed|create-error') -gt 0 } 25
 $line = (LogLines | Where-Object { $_ -match 'sink-created' } | Select-Object -First 1)
-Check "SK-1" ($(if ($line) { "PASS" } else { "FAIL" })) "a window can be created on Jwno's UI thread through a custom message" ((LogLines | Where-Object { $_ -match 'sink-|msg-registered|create' }) -join " | ")
+Check "SK-1" ($(if ($line) { "PASS" } else { "FAIL" })) "a window can be created on Jwno's UI thread through a custom message" ((LogLines | Select-Object -First 25) -join " | ")
 if ($line -and $line -match 'sink-created (\d+)') {
   $h = [IntPtr][int64]$Matches[1]
   $ex = [S]::GetWindowLong($h, -20)
