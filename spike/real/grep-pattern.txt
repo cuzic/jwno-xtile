@@ -1,1 +1,1 @@
-STATE.*3936640|3936640.*(ignore|hidden|tool|skip|classif|exclude)|classif|ignore
+^(?!\S+ STATE).*(started|installed|window-created|window-removed|error|exit|stopp|shutdown)
