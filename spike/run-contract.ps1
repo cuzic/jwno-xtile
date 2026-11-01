@@ -20,6 +20,8 @@ public static class C {
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int hh, uint f);
   [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, int dx, int dy, uint d, UIntPtr e);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT r, int sz);
 }
 "@
@@ -41,6 +43,21 @@ function Frame($h) {
   $e = New-Object RECT
   [void][C]::DwmGetWindowAttribute($h, 9, [ref]$e, 16)
   @($e.L, $e.T, ($e.R - $e.L), ($e.B - $e.T))
+}
+function MouseDown() { [C]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero) }
+function MouseUp() { [C]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero) }
+function TitleBarPoint($h) { $f = Frame $h; @(($f[0] + [int]($f[2] / 2)), ($f[1] + 14)) }
+function ClickTitleBar($h) {
+  $pt = TitleBarPoint $h
+  [void][C]::SetCursorPos($pt[0], $pt[1]); Start-Sleep -Milliseconds 200
+  MouseDown; Start-Sleep -Milliseconds 250; MouseUp; Start-Sleep -Milliseconds 300
+}
+function DragTitleBar($h, $dx, $dy) {
+  $pt = TitleBarPoint $h
+  [void][C]::SetCursorPos($pt[0], $pt[1]); Start-Sleep -Milliseconds 200
+  MouseDown; Start-Sleep -Milliseconds 250
+  for ($i = 1; $i -le 10; $i++) { [void][C]::SetCursorPos($pt[0] + [int]($dx * $i / 10), $pt[1] + [int]($dy * $i / 10)); Start-Sleep -Milliseconds 40 }
+  Start-Sleep -Milliseconds 200; MouseUp; Start-Sleep -Milliseconds 300
 }
 function Launch() { $p = Start-Process notepad -PassThru; Start-Sleep 3; $p.Refresh(); $p }
 function Id($p) { $p.MainWindowHandle.ToInt64() }
@@ -121,13 +138,54 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   $d = 0; for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) }
   Check "CT-6c" ($(if ($want -and $d -le 1) { "PASS" } else { "FAIL" })) "the core's :refresh puts it back" ("frame=" + ($f -join ",") + " want=" + ($want -join ","))
 
-  # ---- maximize: Jwno unmaximizes in its transform regardless of swp-flags (source) ----
-  [void][C]::ShowWindow($h2, 3); Start-Sleep 1
-  $z1 = [C]::IsZoomed($h2)
+  # ---- maximize: the user's own action floats the tile (ADR 0010 D9 N3); it is not shrunk back ----
+  [void][C]::ShowWindow($h2, 3)
+  $okf = WaitFor { (Win $i2).floating -eq $true } 8
+  $z = [C]::IsZoomed($h2)
+  Check "CT-7a" ($(if ($okf -and $z) { "PASS" } else { "FAIL" })) "a window the user maximised becomes floating within the poll, and stays maximised" "floating=$okf zoomed=$z"
   [void](Cmd "retile"); Start-Sleep 2
-  $z2 = [C]::IsZoomed($h2)
-  Check "CT-7" "INFO" "maximized window and Jwno's :retile" "zoomed before=$z1 after=$z2 (source predicts: unmaximized)"
-  [void](Cmd ":xtile :refresh"); Start-Sleep 2
+  Check "CT-7b" "INFO" "Jwno's :retile on that floating, maximised window (its transform always un-maximises)" ("zoomed after retile=" + [C]::IsZoomed($h2))
+  [void][C]::ShowWindow($h2, 9); Start-Sleep 1
+  Focus $h2
+  [void](WaitFor { (State).os_focus -eq $i2 } 6)
+  [void](Cmd ":xtile :toggle-float")
+  $back = WaitFor { (Win $i2).floating -eq $false } 6
+  Start-Sleep 2
+  $f = Frame $h2; $want = (Win $i2).rect
+  $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
+  Check "CT-7c" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float puts it back into the tiling at the core's rect" ("floating=" + (Win $i2).floating + " frame=" + ($f -join ",") + " want=" + ($want -join ","))
+
+  # ---- the user's mouse: a title-bar click floats nothing, a drag floats the tile where it was dropped ----
+  $h0 = $N0.MainWindowHandle
+  $w0 = (Win $i0).rect
+  ClickTitleBar $h0
+  Start-Sleep 3
+  Check "CT-17a" ($(if ((Win $i0).floating -eq $false) { "PASS" } else { "FAIL" })) "pressing a title bar and letting go without moving floats nothing" ("floating=" + (Win $i0).floating)
+  $before = Frame $h1
+  $drags0 = Count ("window-dragged id=" + $i1)
+  DragTitleBar $h1 -200 160
+  $okd = WaitFor { (Win $i1).floating -eq $true } 6
+  Start-Sleep 2
+  $after = Frame $h1
+  $moved = ([math]::Abs($after[0] - $before[0]) -gt 40) -or ([math]::Abs($after[1] - $before[1]) -gt 40)
+  Check "CT-17b" ($(if ($okd) { "PASS" } else { "FAIL" })) "dragging a tile floats it" ("floating=$okd")
+  Check "CT-17c" ($(if ($moved) { "PASS" } else { "FAIL" })) "... and it stays where it was dropped (is not pulled back)" ("frame before=" + ($before -join ",") + " after=" + ($after -join ","))
+  $nd = (Count ("window-dragged id=" + $i1)) - $drags0
+  Check "CT-17d" ($(if ($nd -eq 1) { "PASS" } else { "FAIL" })) "exactly one window-dragged reaches the core for one drag (none while dragging)" "count=$nd"
+  $s = State; $worst = 0; $diffs = @()
+  foreach ($w in $s.windows) { if ($w.rect -and -not $w.floating) {
+    $f = Frame ([IntPtr]::new([int64]$w.id)); $d = 0
+    for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $w.rect[$k])) }
+    $worst = [math]::Max($worst, $d); $diffs += ("{0}: core=[{1}] actual=[{2}]" -f $w.id, ($w.rect -join ","), ($f -join ",")) } }
+  Check "CT-17e" ($(if ($worst -le 1 -and $diffs.Count -gt 0) { "PASS" } else { "FAIL" })) "the remaining tiles were re-tiled around it (worst diff $worst px)" ($diffs -join " | ")
+  Focus $h1
+  [void](WaitFor { (State).os_focus -eq $i1 } 6)
+  [void](Cmd ":xtile :toggle-float")
+  $back = WaitFor { (Win $i1).floating -eq $false } 6
+  Start-Sleep 2
+  $f = Frame $h1; $want = (Win $i1).rect
+  $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
+  Check "CT-17f" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float returns the dragged window to the tiling" ("frame=" + ($f -join ",") + " want=" + ($want -join ","))
 
   # ---- polling: minimize / restore reach the core ----
   $h1 = $N1.MainWindowHandle
@@ -167,6 +225,9 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-13b" ($(if (($supp2 - $supp1) -eq 1) { "PASS" } else { "FAIL" })) "A: exactly one wm :set-focus was swallowed by that switch" "suppressed $supp1 -> $supp2"
   $t1 = (Win $i1).tag; $t2 = (Win $i2).tag
   Check "CT-14" ($(if ($t1 -eq "1" -and $t2 -eq "1" -and (Has $i3) -and (Win $i3).tag -eq "2") { "PASS" } else { "FAIL" })) "the desktop round trip kept every window's workspace (and desktop 2's window is still known)" "tags: n1=$t1 n2=$t2 n3=$((Win $i3).tag)"
+  $before = Frame $h0
+  DragTitleBar $h0 -150 120
+  Check "CT-17g" ($(if (WaitFor { (Win $i0).floating -eq $true } 6) { "PASS" } else { "FAIL" })) "after a virtual-desktop round trip the move hook still works" ("floating=" + (Win $i0).floating)
   Check "CT-16" ($(if ((Count 'skipped a window') -eq 0) { "PASS" } else { "FAIL" })) "the poll never drops a window because reading its facts failed" ((LogLines | Where-Object { $_ -match 'skipped a window' } | Select-Object -First 2) -join " | ")
   Check "CT-15" "INFO" "foreground after returning (the OS's own choice, since Jwno's refocus is suppressed)" ("fg=" + [C]::GetForegroundWindow().ToInt64() + " ids=$i0,$i1,$i2,$i3")
 }

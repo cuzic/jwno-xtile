@@ -65,6 +65,42 @@
 
 (defn minimized? [hwnd] (true? (IsIconic hwnd)))
 
+(defn zoomed? [hwnd] (true? (IsZoomed hwnd)))
+
+(defn mouse-down?
+  "Any mouse button is down (the left and right buttons are both checked, so a swapped-button setup is covered)."
+  []
+  (guarded false
+           (fn []
+             (or (neg? (num (GetAsyncKeyState 0x01)))     # VK_LBUTTON; the high bit of the SHORT = down
+                 (neg? (num (GetAsyncKeyState 0x02)))))))
+
+(defn watch-moves
+  "Call (on-hwnd hwnd) when a window's move/resize loop ends (EVENT_SYSTEM_MOVESIZEEND). The
+  callback runs INSIDE `pump`, on this thread, nested in a C call: it must not yield (ADR 0010 D9).
+  Returns the hook handle, or nil if it could not be installed."
+  [on-hwnd]
+  (def hook
+    (SetWinEventHook EVENT_SYSTEM_MOVESIZEEND EVENT_SYSTEM_MOVESIZEEND nil
+                     (fn [_hook _event hwnd id-object _id-child _thread _time]
+                       (when (= id-object OBJID_WINDOW) (on-hwnd hwnd)))
+                     0 0 (bor WINEVENT_OUTOFCONTEXT WINEVENT_SKIPOWNPROCESS)))
+  (when (and hook (not (null? hook))) hook))
+
+(defn unwatch-moves [hook] (UnhookWinEvent hook))
+
+(defn pump
+  "WINEVENT_OUTOFCONTEXT callbacks are delivered only while the hooking thread pumps messages, and
+  Jwno's main thread runs Janet's event loop, not a Win32 one. -> number of messages dispatched."
+  []
+  (def msg (MSG))
+  (var n 0)
+  (while (true? (PeekMessage msg nil 0 0 PM_REMOVE))
+    (TranslateMessage msg)
+    (DispatchMessage msg)
+    (++ n))
+  n)
+
 (defn hung? [hwnd]
   (def f (opt "IsHungAppWindow"))
   (if f (guarded false (fn [] (true? (f hwnd)))) false))
@@ -135,6 +171,11 @@
    :facts facts
    :desktop-guid desktop-guid
    :minimized? minimized?
+   :zoomed? zoomed?
+   :mouse-down? mouse-down?
+   :watch-moves watch-moves
+   :unwatch-moves unwatch-moves
+   :pump pump
    :hung? hung?
    :beep beep
    :swp-nomove-nosize (bor SWP_NOMOVE SWP_NOSIZE)})

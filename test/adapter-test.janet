@@ -17,7 +17,7 @@
            :fg nil               # foreground hwnd (struct) or nil
            :roots @{}            # ptr -> root ptr (default: itself)
            :guids @{}            # ptr -> desktop guid
-           :minimized @{} :hung @{}
+           :minimized @{} :hung @{} :zoomed @{} :mouse false :move-events @[] :move-cb nil :pump-throws false
            :rects @{}            # ptr -> actual visible rect after a transform (default: as asked)
            :desktops @[]         # [index guid name]
            :refreshes 0
@@ -64,8 +64,8 @@
   (def keymap @{:define-key (fn [self k cmd] (rec :define-key k cmd))})
   (def cmd-man @{:add-command (fn [self name f] (put w :xtile-command f))})
   (put w :wm wm)
-  (put w :context {:window-manager wm :hook-manager hook-man :virtual-desktop-manager vd-man
-                   :command-manager cmd-man})
+  (put w :context @{:window-manager wm :hook-manager hook-man :virtual-desktop-manager vd-man
+                    :command-manager cmd-man})
   (put w :keymap keymap)
   (put w :win32
        {:foreground-hwnd (fn [] (w :fg))
@@ -78,6 +78,16 @@
         :minimized? (fn [h] (truthy? (get (w :minimized) (h :ptr))))
         :hung? (fn [h] (truthy? (get (w :hung) (h :ptr))))
         :beep (fn [] (rec :beep))
+        :zoomed? (fn [h] (truthy? (get (w :zoomed) (h :ptr))))
+        :mouse-down? (fn [] (w :mouse))
+        :watch-moves (fn [cb] (put w :move-cb cb) (rec :watch-moves) :hook)
+        :unwatch-moves (fn [hook] (put w :move-cb nil) (rec :unwatch-moves hook))
+        :pump (fn []
+                (when (w :pump-throws) (error "pump failed"))
+                (def evs (array ;(w :move-events)))
+                (array/clear (w :move-events))
+                (each h evs ((w :move-cb) h))
+                (length evs))
         :swp-nomove-nosize 3})
   (put w :add-window! add-window!)
   w)
@@ -384,3 +394,127 @@
   (flush! w)
   (is (nil? (st/locate (state-of a) 8)))
   (is (find |(string/find "not in Jwno's tree" (string ($ 1))) (w :logs))))
+
+# ---- D9: window-dragged / window-moved ---------------------------------------------------
+
+(defn managed-window
+  "a window known to the core, tiled, id n"
+  [w a n]
+  (def win ((w :add-window!) n g1))
+  ((get (w :hooks) :window-created) win :uia "x" {:id g1})
+  (flush! w)
+  win)
+
+(defn pump-tick! [a] ((a :pump-tick)))
+
+(deftest "D9: the MOVESIZEEND callback only queues; the dispatch happens in our own fiber, with the rect read then"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (is (w :move-cb))
+  (put (w :rects) 4 {:left 50 :top 60 :right 350 :bottom 260})          # where the user dropped it
+  ((w :move-cb) (hw 4))
+  (is= 0 (length (w :pending)))                                           # no spawn, no dispatch inside the callback
+  (is (not (st/floating? (state-of a) 4)))
+  (pump-tick! a)
+  (is (st/floating? (state-of a) 4))                                      # moved elsewhere: it floats
+  (is (not (st/floating? (state-of a) 5))))
+
+(deftest "D9: a click on the title bar (the window is where we put it) floats nothing"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (def p ((st/placements (state-of a)) 4))
+  (put (w :rects) 4 {:left (p :x) :top (p :y) :right (+ (p :x) (p :w)) :bottom (+ (p :y) (p :h))})
+  ((w :move-cb) (hw 4))
+  (pump-tick! a)
+  (is (not (st/floating? (state-of a) 4))))
+
+(deftest "D9: events for windows Jwno does not manage are ignored, and a throwing callback is survivable"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  ((w :move-cb) (hw 99))
+  (put (w :roots) 7 :dead)
+  ((w :move-cb) (hw 7))                                                   # GetAncestor gave NULL
+  ((w :move-cb) nil)
+  (pump-tick! a)
+  (is= 1 (length (st/placements (state-of a))))
+  (is (not (st/floating? (state-of a) 4))))
+
+(deftest "D9: polling compares every managed window; maximised tiles float, the rest are put back"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (managed-window w a 6)
+  (def p ((st/placements (state-of a)) 4))
+  (put (w :rects) 4 {:left 0 :top 0 :right 9 :bottom 9})                  # an app moved itself
+  (put (w :zoomed) 5 true)
+  (put (w :rects) 5 {:left 0 :top 0 :right 1000 :bottom 600})             # the user maximised it
+  (array/clear (w :calls))
+  ((a :poll-once))
+  (is (st/floating? (state-of a) 5))                                      # maximised -> floating, stays maximised
+  (is (not (st/floating? (state-of a) 4)))
+  (is (find |(and (= (first $) :transform) (= (get $ 1) 4)) (w :calls)))  # 4 was put back
+  (is (not (find |(and (= (first $) :transform) (= (get $ 1) 5)) (w :calls)))))
+
+(deftest "D9: polling does not compare while a mouse button is down, nor minimised windows"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 0 :top 0 :right 9 :bottom 9})
+  (put w :mouse true)
+  (array/clear (w :calls))
+  ((a :poll-once))
+  (is= 0 (length (calls-of w :transform)))                                # the user may be dragging
+  (put w :mouse false)
+  (put (w :minimized) 4 true)
+  ((a :poll-once))
+  (is= 0 (length (calls-of w :transform)))                                # minimised: Jwno skips it anyway
+  (put (w :minimized) 4 false)
+  ((a :poll-once))
+  (is (find |(= (first $) :transform) (w :calls))))
+
+(deftest "D9: a drop that lands just before the poll is processed first, so the drop position is not lost (N2)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (put (w :rects) 4 {:left 50 :top 60 :right 350 :bottom 260})
+  (array/push (w :move-events) (hw 4))                                    # MOVESIZEEND is waiting in the queue ...
+  (array/clear (w :calls))
+  ((a :poll-once))                                                         # ... when the poll runs
+  (is (st/floating? (state-of a) 4))
+  (is (not (find |(and (= (first $) :transform) (= (get $ 1) 4)) (w :calls)))))   # never dragged back
+
+(deftest "D9: ten failed pumps unhook and fall back to polling only"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (put w :pump-throws true)
+  (for _ 0 10 (pump-tick! a))
+  (is (find |(= (first $) :unwatch-moves) (w :calls)))
+  (is (find |(string/find "falling back" (string ($ 1))) (w :logs)))
+  (pump-tick! a)                                                          # still harmless
+  (is= 1 (length (calls-of w :unwatch-moves))))
+
+(deftest "D9: :watch-moves? false installs no hook; shutting-down removes it; install is idempotent"
+  (def w (fake-world))
+  (install-adapter w {:watch-moves? false})
+  (is= 0 (length (calls-of w :watch-moves)))
+  (def w2 (fake-world))
+  (def a2 (install-adapter w2))
+  (is= 1 (length (calls-of w2 :watch-moves)))
+  (is (= a2 (install-adapter w2)))                               # the second install returns the first
+  (is= 1 (length (calls-of w2 :watch-moves)))
+  ((get (w2 :hooks) :shutting-down))
+  (is= 1 (length (calls-of w2 :unwatch-moves)))
+  ((get (w2 :hooks) :shutting-down))
+  (is= 1 (length (calls-of w2 :unwatch-moves))))
+
+(deftest "D9: the pump is scheduled every 100ms by start"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  ((a :start))
+  (is (find |(= 0.1 (first $)) (w :later))))

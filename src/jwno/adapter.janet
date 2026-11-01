@@ -44,8 +44,7 @@
 (defn jwno->rect [r]
   {:x (r :left) :y (r :top) :w (- (r :right) (r :left)) :h (- (r :bottom) (r :top))})
 
-(defn install
-  "-> adapter table {:rt :start :poll-once :enumerate :norm :tag-of-guid :a-active? :ctx}."
+(defn- install*
   [context win32 &opt opts]
   (default opts {})
   (def wm (in context :window-manager))
@@ -259,10 +258,101 @@
                         (dispatch! [:screen-changed area])
                         (dispatch! [:command :refresh])))))
 
+  # ---- user drags / resizes (ADR 0010 D9) ---------------------------------------------------
+  (def drag-queue @[])
+  (var move-hook nil)
+  (var pump-failures 0)
+  (var stopped false)
+
+  (defn queue-drag
+    "Runs INSIDE the message pump, nested in a C call: it must not yield, so it only appends to a
+    plain array. Windows Jwno does not manage are not queued."
+    [hwnd]
+    (protect
+      (when hwnd
+        (def root (w :root-of hwnd))
+        (when root
+          (def n (w :hwnd->number root))
+          (when (and (not= 0 n) (get num->hwnd n))
+            (array/push drag-queue n))))))
+
+  (defn visible-rect [win] (jwno->rect (:get-rect win true)))
+
+  (defn drain-drags
+    "Tell the core about the drags that ended, in OUR fiber (not in the callback). The rect is read
+    now, not when the callback fired, so a snap that follows the drop is already in it."
+    []
+    (def ids (distinct drag-queue))
+    (array/clear drag-queue)
+    (each id ids
+      (def [ok err]
+        (protect
+          (let [hwnd (get num->hwnd id)
+                win (when hwnd (:find-hwnd wm hwnd))]
+            (when (and win (not (w :minimized? hwnd)))
+              (def rect (visible-rect win))
+              (log-fn :debug (string/format "window-dragged id=%q rect=%q" id rect))
+              (dispatch! [:window-dragged id rect])))))
+      (unless ok (log-fn :warn (string "window-dragged: " err)))))
+
+  (defn unwatch! [why]
+    (when move-hook
+      (protect (w :unwatch-moves move-hook))
+      (set move-hook nil)
+      (log-fn :warn (string "stopped watching window moves: " why))))
+
+  (defn pump-tick []
+    (when (and move-hook (not stopped))
+      (def [ok n] (protect (w :pump)))
+      (if ok
+        (do (set pump-failures 0)
+            (when (> n 200) (log-fn :warn (string "the message pump handled " n " messages in one tick"))))
+        (do (++ pump-failures)
+            (when (>= pump-failures 10)
+              (unwatch! (string "the pump failed 10 times, falling back to polling: " n))))))
+    (drain-drags))
+
+  (defn stop []
+    (set stopped true)
+    (when move-hook
+      (protect (w :unwatch-moves move-hook))
+      (set move-hook nil)))
+
+  (when (get opts :watch-moves? true)
+    (def [ok hook] (protect (w :watch-moves queue-drag)))
+    (if (and ok hook)
+      (set move-hook hook)
+      (log-fn :warn (string "could not watch window moves (polling only): " hook))))
+
+  (:add-hook hook-man :shutting-down (fn [& _] (stop)))
+
+  (defn schedule-pump []
+    (when (and move-hook (not stopped))
+      (later 0.1 (fn [] (protect (pump-tick)) (schedule-pump)))))
+
   # ---- polling: the only source for minimize / fullscreen / title / late removals (D4) -----
+  (defn compare-placements
+    "Read every managed window's visible frame and tell the core: it keeps the placement, floats
+    a window the user maximised (D9 N3) and ignores floats. Not while a mouse button is down (the
+    user may be dragging), not for minimised windows."
+    []
+    (unless (w :mouse-down?)
+      (each [id hwnd] (array ;(pairs num->hwnd))
+        (def [ok err]
+          (protect
+            (let [win (:find-hwnd wm hwnd)]
+              (when (and win (not (w :minimized? hwnd)) (not (w :hung? hwnd)))
+                (def rect (visible-rect win))
+                (dispatch! (if (w :zoomed? hwnd)
+                             [:window-dragged id rect]
+                             [:window-moved id rect]))))))
+        (unless ok (log-fn :warn (string "compare " id ": " err))))))
+
   (defn poll-once []
+    (pump-tick)      # drops that are waiting must reach the core BEFORE the comparison below (N2)
     (pin-all!)
-    (dispatch! [:windows-observed (enumerate)]))
+    (dispatch! [:windows-observed (enumerate)])
+    (when (get opts :verify-placements? true) (compare-placements)))
 
   (defn schedule-poll []
     (when poll-seconds
@@ -292,7 +382,19 @@
     "Hooks are already registered (R-7): sync, then start polling."
     []
     (rt/start rtm)
+    (schedule-pump)
     (schedule-poll))
 
   @{:rt rtm :ctx ctx :start start :poll-once poll-once :enumerate enumerate :norm norm
-    :tag-of-guid tag-of-guid :a-active? a-active? :work-area work-area})
+    :tag-of-guid tag-of-guid :a-active? a-active? :work-area work-area
+    :pump-tick pump-tick :stop stop})
+
+(defn install
+  "-> adapter table {:rt :start :poll-once :enumerate :norm :tag-of-guid :a-active? :ctx :pump-tick :stop}.
+  Idempotent: a second call on the same context returns the first adapter (it would otherwise
+  wrap Jwno's methods and register every hook twice)."
+  [context win32 &opt opts]
+  (or (get context :xtile-adapter)
+      (let [a (install* context win32 opts)]
+        (put context :xtile-adapter a)
+        a)))
