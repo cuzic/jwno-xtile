@@ -1,1 +1,1 @@
-721368|5767682.*(focus|STATE)|port-focus|focus-changed
+wm-desktop-name-changed|suppressed|virtual-desktop-changed|Virtual desktop name
