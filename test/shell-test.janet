@@ -19,7 +19,7 @@
   (defn rec [& c] (array/push (os :calls) c))
   (put os :ctx
       {:place (fn [id r] (boom :place) (rec :place id r) (put (os :rects) id r))
-       :focus (fn [id] (boom :focus) (rec :focus id)
+       :focus (fn [id &opt _mark] (boom :focus) (rec :focus id)
                 (unless (os :focus-lock) (put os :fg id)))
        :goto (fn [tag] (boom :goto) (rec :goto tag))
        :hide (fn [id] (boom :hide) (rec :hide id))
@@ -404,3 +404,45 @@
   (array/clear (os :later))
   (rt/dispatch r [:command :goto "1"])
   (is (find |(= 1.0 (first $)) (os :later))))
+
+# ---- ADR 0006 D-7: the OS focus must not rest on a parked window -----------------------------
+
+(defn with-focus-none [os]
+  (merge (os :ctx) {:focus-none (fn [&opt mark] (array/push (os :calls) [:focus-none mark]) (put os :fg :sink))}))
+
+(deftest "D-7: an external focus change onto a parked window schedules ONE reclaim, which pulls the focus back"
+  (def os (fake-os))
+  (def r (rt/make (with-focus-none os) (st/make screen ["1" "2" "3"])))
+  (rt/dispatch r [:window-opened :a]) (rt/dispatch r [:window-opened :p "2"]) (rt/dispatch r [:focus-changed :a])
+  (array/clear (os :calls)) (array/clear (os :later))
+  (put os :fg :p)                                                      # the real front window really is :p
+  (rt/dispatch r [:focus-changed :p])
+  (rt/dispatch r [:focus-changed :p])                                  # a second event: no second timer
+  (is= 1 (length (os :later)))
+  (run-later! os)
+  (is (find |(= $ [:focus :a]) (os :calls)))
+  # (the fake's :focus ignores the :reclaim mark, so the call is recorded without it)
+  )
+
+(deftest "D-7/L1: the runtime's own look at the front window (observe-front) does not schedule a reclaim"
+  (def os (fake-os))
+  (def r (rt/make (with-focus-none os) (st/make screen ["1" "2" "3"])))
+  (rt/dispatch r [:window-opened :a]) (rt/dispatch r [:window-opened :p "2"])
+  (put os :fg :p)                                                      # the real front window is a parked one
+  (array/clear (os :later))
+  (rt/dispatch r [:command :goto "3"])                                 # observe-front reads :p ... but it is our own look
+  (is (not (find |(= (get $ 0) 0) (os :later)))))
+
+(deftest "D-7: an empty workspace gets focus-none (no port = a warning, not a failure)"
+  (def os (fake-os))
+  (def r (rt/make (with-focus-none os) (st/make screen ["1" "2" "3"])))
+  (rt/dispatch r [:window-opened :a]) (rt/dispatch r [:focus-changed :a])
+  (put os :fg :a)
+  (rt/dispatch r [:command :goto "2"])
+  (is (find |(= (first $) :focus-none) (os :calls)))
+  (def os2 (fake-os))
+  (def r2 (rt/make (os2 :ctx) (st/make screen ["1" "2" "3"])))     # the fake has no :focus-none
+  (rt/dispatch r2 [:window-opened :a]) (rt/dispatch r2 [:focus-changed :a])
+  (put os2 :fg :a)
+  (rt/dispatch r2 [:command :goto "2"])
+  (is (= 0 (r2 :failures))))

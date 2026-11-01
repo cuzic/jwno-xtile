@@ -2,7 +2,8 @@
 # a re-entrancy-free event queue, and executes effects through a `ctx` port.
 # It imports neither Jwno nor jw32; everything that touches the OS is a
 # function in `ctx`:
-#   effects:   :place (id rect) :focus (id) :close (id) :goto (tag) :send (id tag) :hide (id) :show (id)
+#   effects:   :place (id rect) :focus (id &opt :reclaim) :focus-none (&opt :reclaim) :close (id) :goto (tag)
+#              :send (id tag) :hide (id) :show (id)   (:focus-none is optional: ADR 0006 D-7)
 #   observe:   :foreground () -> id|nil   (root window, NOT owner-normalised)
 #              :foreground-is? (id) -> bool   (exact match)
 #              :current-desktop () -> tag|nil
@@ -27,7 +28,8 @@
   @{:ctx ctx :state state :queue @[] :busy false
     :failures 0           # recoveries scheduled since the last clean batch
     :recovery-pending false
-    :reobserve-pending false})
+    :reobserve-pending false
+    :reclaim-pending false})
 
 (defn state [rt] (rt :state))
 
@@ -63,7 +65,8 @@
   [rt nil-ok?]
   (def [ok id] (call rt :foreground))
   (when (and ok (or nil-ok? id))
-    (push-front rt [:focus-changed id])))
+    # tagged: the adapter's own look at the front window must not schedule a reclaim (4d L1)
+    (push-front rt [:focus-changed id :observed])))
 
 (defn- schedule-reobserve [rt]
   (unless (rt :reobserve-pending)
@@ -76,6 +79,19 @@
               (def [ok id] (call rt :foreground))
               (when (and ok id) (redispatch rt [:focus-changed id])))))
     (unless ok (put rt :reobserve-pending false))))
+
+(defn- schedule-reclaim
+  "ADR 0006 D-7c: ask the core, at once (queue tail), whether the OS focus rests on a parked window.
+  One timer at a time; the core decides, counts the tries, and gives up after three."
+  [rt]
+  (unless (rt :reclaim-pending)
+    (put rt :reclaim-pending true)
+    (def [ok _]
+      (call rt :later 0
+            (fn []
+              (put rt :reclaim-pending false)
+              (redispatch rt [:command :reclaim-focus]))))
+    (unless ok (put rt :reclaim-pending false))))
 
 (defn- schedule-recovery [rt]
   (when (and (not (rt :recovery-pending)) (< (rt :failures) max-recoveries))
@@ -99,7 +115,11 @@
   [rt fx]
   (case (first fx)
     :place (first (call rt :place (fx 1) (fx 2)))
-    :focus (first (call rt :focus (fx 1)))
+    :focus (first (if (get fx 2) (call rt :focus (fx 1) (fx 2)) (call rt :focus (fx 1))))
+    :focus-none (if (get (rt :ctx) :focus-none)
+                  (first (if (get fx 1) (call rt :focus-none (fx 1)) (call rt :focus-none)))
+                  (do (log rt :warn "no :focus-none port: the OS focus may stay on a parked window") true))
+    :notify (do (call rt :notify (fx 1) (fx 2)) true)
     :goto (first (call rt :goto (fx 1)))
     :hide (first (call rt :hide (fx 1)))        # ADR 0006: leave the visible workspace
     :show (first (call rt :show (fx 1)))        # ... and come back
@@ -123,7 +143,7 @@
   (var observed-needed false)
   (each fx effects
     (cond
-      (and goto-failed (= (first fx) :focus))
+      (and goto-failed (index-of (first fx) [:focus :focus-none]))
       (do (++ failed) (log rt :warn "skipped :focus after a failed :goto"))
       (let [ok (execute rt fx)]
         (unless ok
@@ -131,7 +151,7 @@
           (when (= (first fx) :goto) (set goto-failed true)))
         (when (and ok (= (first fx) :goto)) (set goto-ok true))
         (when (and ok (= (first fx) :focus)) (set focus-ok true))
-        (when (index-of (first fx) [:focus :goto]) (set observed-needed true)))))
+        (when (index-of (first fx) [:focus :focus-none :goto]) (set observed-needed true)))))
   [failed observed-needed (length effects) (and goto-ok focus-ok)])
 
 (defn- schedule-reassert
@@ -163,7 +183,11 @@
       (when (and (zero? failed) (> n 0)) (put rt :failures 0))
       (when (or observe? (= (get event 0) :desktop-changed))
         (observe-front rt false)
-        (schedule-reobserve rt)))))
+        (schedule-reobserve rt))
+      # an OS focus change that is not our own look at the front window (Jwno's hook, the re-observation
+      # timer): if it left the focus on a parked window, the core is asked about it (D-7c)
+      (when (and (= (get event 0) :focus-changed) (not= (get event 2) :observed) (u/stray? (rt :state)))
+        (schedule-reclaim rt)))))
 
 (defn dispatch [rt event]
   (array/push (rt :queue) event)

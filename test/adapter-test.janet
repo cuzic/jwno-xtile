@@ -95,6 +95,7 @@
                                (or (nil? (w :desktop)) (nil? g) (= (w :desktop) g)))
         :minimized? (fn [h] (truthy? (get (w :minimized) (h :ptr))))
         :hung? (fn [h] (truthy? (get (w :hung) (h :ptr))))
+        :window-rect (fn [h] (get (w :rects) (h :ptr)))
         :beep (fn [] (rec :beep))
         :zoomed? (fn [h] (truthy? (get (w :zoomed) (h :ptr))))
         :mouse-down? (fn [] (w :mouse))
@@ -770,3 +771,52 @@
   ((a :poll-once))
   ((a :stop))
   (is (nil? (get (a :parked) 4))))
+
+(deftest "D-6: :show brings back a window that is off-screen but not in `parked` (the entry was lost)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left -32000 :top -32000 :right -31700 :bottom -31700})
+  ((get (a :ctx) :show) 4)
+  (is (> ((rect-of w 4) :left) -30000))
+  # an on-screen window is left alone
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :show) 4)
+  (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4)))
+
+(deftest "D-6: Jwno purging a live window (an app hiding in the tray) keeps its parked entry"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 4)
+  ((get (w :hooks) :window-removed) ((w :windows) 4))
+  (is (get (a :parked) 4))                                          # the window still exists
+  (put (w :roots) 4 :dead)
+  ((get (w :hooks) :window-removed) ((w :windows) 4))
+  (is (nil? (get (a :parked) 4))))
+
+(deftest "D-7f: a reclaim focus never takes the focus from a window the user can see; a plain focus does"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (put (w :rects) 4 {:left 0 :top 0 :right 100 :bottom 100})            # on screen
+  (put (w :rects) 5 {:left 200 :top 0 :right 300 :bottom 100})
+  (put w :fg (hw 4))
+  (array/clear (w :calls))
+  ((get (a :ctx) :focus) 5 :reclaim)
+  (is= 0 (length (calls-of w :window-set-focus)))
+  ((get (a :ctx) :focus) 5)
+  (is= 1 (length (calls-of w :window-set-focus)))
+  # the front window is a parked one: the reclaim goes ahead
+  (put (w :rects) 4 {:left -32000 :top -32000 :right -31900 :bottom -31900})
+  (put w :fg (hw 4))
+  ((get (a :ctx) :focus) 5 :reclaim)
+  (is= 2 (length (calls-of w :window-set-focus))))
+
+(deftest "D-7b: focus-none without a sink window warns and succeeds (it must not cause a recovery)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (is= true ((get (a :ctx) :focus-none)))
+  (is (find |(string/find "no sink window" ($ 1)) (w :logs))))

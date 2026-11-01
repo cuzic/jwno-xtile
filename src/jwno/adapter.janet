@@ -148,6 +148,31 @@
             (:transform-hwnd wm hwnd (rect->jwno (p :rect)) @{:swp-flags 0}))
           (put parked id nil)))))
 
+  (defn front-on-screen?
+    "ADR 0006 D-7f: is the front window one the user can see? (Only asked for reclaim effects.)
+    Unknown means no: then the reclaim goes ahead."
+    []
+    (def pf (get win32 :window-rect))
+    (def hwnd (w :foreground-hwnd))
+    (def r (and pf hwnd (pf hwnd)))
+    (and r (> (r :left) (+ park-x 2000))))
+
+  (defn show
+    "ADR 0006 D-6: the window enters the visible workspace. Parked: back to where it was. Not parked but
+    found off-screen (the entry was lost, or the core forgot it): to the work area. Otherwise nothing."
+    [id]
+    (if (get parked id)
+      (unpark id)
+      (when-let [hwnd (get num->hwnd id)
+                 win (:find-hwnd wm hwnd)
+                 pf (get win32 :window-rect)
+                 r (pf hwnd)]
+        (when (and (< (r :left) (+ park-x 2000)) (not (w :minimized? hwnd)))
+          (def wa (work-area))
+          (log-fn :info (string/format "show: window %q found off-screen at %q, bringing it back" id r))
+          (move-to win {:x (wa :x) :y (wa :y)
+                        :w (min (- (r :right) (r :left)) (wa :w)) :h (min (- (r :bottom) (r :top)) (wa :h))})))))
+
   (defn place [id rect]
     (put parked id nil)         # being placed supersedes being parked
     (def win (window-of id))
@@ -192,13 +217,21 @@
 
   (def ctx
     @{:place place
-      :focus (fn [id]
-              (log-fn :debug (string/format "port-focus id=%q" id))
-              (unpark id)                       # a parked window cannot be focused usefully
-              (:set-focus (window-of id) wm))   # the WINDOW's :set-focus, never wm's (A-2)
+      :focus (fn [id &opt reclaim]
+              (log-fn :debug (string/format "port-focus id=%q%s" id (if reclaim " (reclaim)" "")))
+              (unless (and reclaim (front-on-screen?))      # D-7f: a reclaim never takes the focus from a window the user can see
+                (unpark id)                       # a parked window cannot be focused usefully
+                (:set-focus (window-of id) wm)))  # the WINDOW's :set-focus, never wm's (A-2)
+      :focus-none (fn [&opt reclaim]
+                    (log-fn :debug (string/format "port-focus-none%s" (if reclaim " (reclaim)" "")))
+                    (cond
+                      (and reclaim (front-on-screen?)) true
+                      (get win32 :focus-sink) (do (w :focus-sink) true)
+                      (do (log-fn :warn "focus-none: no sink window (ADR 0006 D-7b is not built yet): the focus stays where it is")
+                          true)))
       :close (fn [id] (:close (window-of id)))
       :hide hide
-      :show unpark
+      :show show
       :goto (fn [_] nil)            # hide/show do the work (ADR 0006 D-1); nothing to do at the OS level
       :send (fn [_ _] nil)
       :foreground foreground
@@ -278,7 +311,11 @@
                (def n (w :hwnd->number (in win :hwnd)))   # the window may already be dead: no GA_ROOT
                (put num->hwnd n nil)
                (put extras n nil)
-               (put parked n nil)
+               # ADR 0006 D-6 (Opus D6-M1): keep the entry while the window lives (an app hiding itself in the
+               # tray is purged by Jwno and comes back to its parked position); a dead window loses it
+               (when-let [p (get parked n)]
+                 (when (or (nil? (p :hwnd)) (nil? (w :root-of (p :hwnd))))
+                   (put parked n nil)))
                (spawn (fn [] (dispatch! [:window-closed n])))))
 
   (:add-hook hook-man :focus-changed
