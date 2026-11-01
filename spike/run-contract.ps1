@@ -158,14 +158,16 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-6" ($(if ($moved.Count -eq 0) { "PASS" } else { "FAIL" })) "Jwno's :retile does not move windows pinned with :swp-flags" (($moved -join " | ") + " [client: $r]")
 
   # a manual move survives Jwno's retile, and the core's :refresh brings it back
+  $h0 = $N0.MainWindowHandle
   $h1 = $N1.MainWindowHandle
   $h2 = $N2.MainWindowHandle
   $want = (Win $i2).rect
   if (-not $want) { Check "CT-6x" "FAIL" "the window used for the move/refresh checks is tiled" ((Win $i2) | ConvertTo-Json -Compress) }
   # The adapter now also puts back windows that moved without a drag (D9), within the 2s poll -- but it
-  # never compares while a mouse button is down. Hold one (on the taskbar's empty part) so the poll cannot
+  # never compares while a mouse button is down. Hold one (inside a notepad) so the poll cannot
   # interleave, and this check measures only what Jwno's own retile does.
-  MouseTo 1010 757; Start-Sleep -Milliseconds 300; MouseDown
+  # hold the button inside a notepad (a harmless click in its text area), whatever the screen size is
+  $hp = TitleBarPoint $h0; MouseTo $hp[0] ($hp[1] + 120); Start-Sleep -Milliseconds 300; MouseDown
   [void][C]::SetWindowPos($h2, [IntPtr]::Zero, 30, 30, 400, 300, 0x0004)
   Start-Sleep -Milliseconds 400; [void](Cmd "retile"); Start-Sleep -Milliseconds 800
   $f = Frame $h2
