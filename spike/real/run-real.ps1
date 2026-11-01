@@ -28,6 +28,11 @@ public static class R {
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static string Title(long h) { var t = new StringBuilder(200); GetWindowText((IntPtr)h, t, 200); return t.ToString(); }
+  public static string Class(long h) { var c = new StringBuilder(100); GetClassName((IntPtr)h, c, 100); return c.ToString(); }
   [ComImport, Guid("A5CD92FF-29BE-454C-8D04-D82879FB3F1B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
   public interface IVdm { [PreserveSig] int IsWindowOnCurrentVirtualDesktop(IntPtr h, out bool b); }
   public static bool OnCurrent(IntPtr h) {
@@ -97,12 +102,23 @@ try {
     foreach ($j in $js) { [void]$j.WaitForExit(20000) }
     Get-Process jwno -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   }
-  # 2. only the notepads started during this run
-  Get-Process notepad -ErrorAction SilentlyContinue | Where-Object { $notepads0 -notcontains $_.Id } | Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Sleep 2
+  # 2. close the windows this run created: new since the snapshot, class Notepad, untitled and empty. WM_CLOSE, never
+  #    Stop-Process: the packaged Notepad has ONE process for all its windows, the user's included.
+  for ($round = 0; $round -lt 3; $round++) {
+    foreach ($h in [R]::TopLevel()) {
+      if (-not $before.ContainsKey("$h") -and [R]::Class($h) -eq "Notepad" -and ([R]::Title($h) -like "タイトルなし*" -or [R]::Title($h) -like "Untitled*")) {
+        [void][R]::PostMessage([IntPtr]$h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+      }
+    }
+    Start-Sleep 2
+  }
+  # anything else that is new on the temporary desktop is not ours to decide about: then the desktop is NOT closed,
+  # because closing it would move that window to the user's desktop
+  $unexpected = @([R]::TopLevel() | Where-Object { -not $before.ContainsKey("$_") -and [R]::OnCurrent([IntPtr]$_) })
+  if ($unexpected.Count -gt 0) { P ("cleanup: $($unexpected.Count) unexpected new window(s) remain on the temporary desktop; leaving the desktop open: " + ($unexpected -join ",")) }
   # 3. close the desktops this run created (they are the last ones), never the anchor's
   $n1 = DesktopCount
-  if ($n1 -gt $n0) {
+  if ($n1 -gt $n0 -and $unexpected.Count -eq 0) {
     for ($i = 0; $i -lt $n1 + 1; $i++) { Chord 0x27; Start-Sleep -Milliseconds 400 }   # go to the last desktop
     for ($i = 0; $i -lt ($n1 - $n0); $i++) {
       if ([R]::OnCurrent($anchor)) { P "cleanup: reached the anchor's desktop; stopping"; break }

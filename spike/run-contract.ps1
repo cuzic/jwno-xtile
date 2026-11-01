@@ -25,6 +25,19 @@ public static class C {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int hh, uint f);
   [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint c);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  public static System.Collections.Generic.List<long> TopLevel() {
+    var l = new System.Collections.Generic.List<long>();
+    EnumWindows((h, _) => { if (IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero && (GetWindowLong(h, -20) & 0x80) == 0) l.Add(h.ToInt64()); return true; }, IntPtr.Zero);
+    return l; }
+  public static string ClassOf(long h) { var c = new System.Text.StringBuilder(100); GetClassName((IntPtr)h, c, 100); return c.ToString(); }
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, int dx, int dy, uint d, UIntPtr e);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT r, int sz);
 }
@@ -93,7 +106,25 @@ function SameFrame($id, $rect) {
   for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $rect[$k])) }
   $d -le 1
 }
-function Launch() { $p = Start-Process notepad -PassThru; Start-Sleep 3; $p.Refresh(); $p }
+# The packaged Notepad of Windows 11 hosts every window in ONE process, and the process we start exits at once:
+# its MainWindowHandle is 0 and killing it would kill the user's own Notepad. So a window is found by what is NEW on
+# screen, and closed with WM_CLOSE (the windows here are empty, so nothing is asked).
+function Launch() {
+  $known = New-Object 'System.Collections.Generic.HashSet[long]'
+  foreach ($h in [C]::TopLevel()) { [void]$known.Add($h) }
+  $null = Start-Process notepad
+  $hwnd = 0
+  $deadline = (Get-Date).AddSeconds(15)
+  while ((Get-Date) -lt $deadline -and -not $hwnd) {
+    $new = @([C]::TopLevel() | Where-Object { -not $known.Contains($_) -and ([C]::ClassOf($_) -eq 'Notepad') })
+    if ($new.Count -ge 1) { $hwnd = $new[0] } else { Start-Sleep -Milliseconds 200 }
+  }
+  Start-Sleep 2
+  $o = [pscustomobject]@{ MainWindowHandle = [IntPtr]$hwnd; Hwnd = $hwnd }
+  $o | Add-Member -MemberType ScriptProperty -Name HasExited -Value { -not [C]::IsWindow($this.MainWindowHandle) }
+  $o
+}
+function CloseWin($p) { if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) { [void][C]::PostMessage($p.MainWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) } }
 function Id($p) { $p.MainWindowHandle.ToInt64() }
 function LogLines() { if (Test-Path $log) { @(Get-Content $log) } else { @() } }
 function State() {
@@ -205,7 +236,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   } else {
     Check "CT-7c" "FAIL" "toggle-float puts it back into the tiling (precondition: focus reached the window)" ("os_focus=" + (State).os_focus + " want=$i6")
   }
-  Stop-Process -Id $N6.Id -Force
+  CloseWin $N6
   Check "CT-7d" ($(if (WaitFor { -not (Has $i6) } 10) { "PASS" } else { "FAIL" })) "the throwaway window leaves the core when it is closed" "id=$i6"
   Start-Sleep 3
 
@@ -356,7 +387,7 @@ if (-not $j.HasExited -and $started) {
   $rec = WaitFor { -not (Parked $i0) } 12
   Check "CT-22c" ($(if ($stuck -and $rec) { "PASS" } else { "FAIL" })) "starting Jwno again recovers windows a previous run left off-screen" ("n0=" + ((Frame $h0) -join ",") + " stuck=$stuck")
 }
-foreach ($p in @($N0, $N1, $N2, $N3, $N6, $N7)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+foreach ($p in @($N0, $N1, $N2, $N3, $N6, $N7)) { if ($p -and -not $p.HasExited) { CloseWin $p } }
 if (-not $j.HasExited) { Stop-Process -Id $j.Id -Force }
 
 $results | ConvertTo-Json -Depth 4 | Out-File -Encoding utf8 (Join-Path $Out "contract-results.json")
