@@ -4,6 +4,12 @@
 name: spike-jwno
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Hosted Windows image to run on"
+        type: choice
+        default: windows-2022
+        options: [windows-2022, windows-2025, windows-latest]
 
 env:
   WIN_SDK_VERSION: "10.0.26100.0"
@@ -24,7 +30,7 @@ env:
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: ${{ inputs.runner || 'windows-2022' }}
     steps:
       - name: This repository (probe scripts)
         uses: actions/checkout@v4
@@ -142,11 +148,19 @@ jobs:
         shell: pwsh
         run: ./xtile/spike/probe-workspaces.ps1 -Out spike-out
 
+      - name: Which Windows was this?
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path spike-out | Out-Null
+          (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | ConvertTo-Json) | Out-File -Encoding utf8 spike-out/os-version.json
+          Get-Content spike-out/os-version.json
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: spike-logs
+          name: spike-logs-${{ inputs.runner || 'windows-2022' }}
           path: spike-out
           retention-days: 7
           if-no-files-found: warn
