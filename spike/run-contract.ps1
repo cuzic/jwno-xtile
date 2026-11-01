@@ -76,6 +76,21 @@ function FocusConfirmed($h, $id) {
   }
   return $false
 }
+function StartJwno() {
+  $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Path $Out "contract-jwno.log"),
+             "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:9999")
+  $before = Count ' started'
+  $p = Start-Process -FilePath $Jwno -ArgumentList $jargs -PassThru
+  [void](WaitFor { (Count ' started') -gt $before } 25)
+  $p
+}
+function Parked($id) { $f = Frame ([IntPtr]::new([int64]$id)); $f[0] -lt -30000 }
+function SameFrame($id, $rect) {
+  $f = Frame ([IntPtr]::new([int64]$id)); $d = 0
+  if (-not $rect) { return $false }
+  for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $rect[$k])) }
+  $d -le 1
+}
 function Launch() { $p = Start-Process notepad -PassThru; Start-Sleep 3; $p.Refresh(); $p }
 function Id($p) { $p.MainWindowHandle.ToInt64() }
 function LogLines() { if (Test-Path $log) { @(Get-Content $log) } else { @() } }
@@ -249,24 +264,62 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   $r = Cmd ":enum-window-in-frame :next"; Start-Sleep 2
   Check "CT-11" "INFO" "a Jwno built-in focus command still works while A is active" ("fg $fgBefore -> " + [C]::GetForegroundWindow().ToInt64() + " [client: $r]")
 
-  # ---- virtual desktops: tags, current, and A ----
+  # ---- workspaces (ADR 0006): goto parks the old workspace, send moves a window ----
+  Start-Sleep 2
+  $s = State
+  $tiles = @{}; foreach ($w in $s.windows) { if ($w.rect -and -not $w.floating) { $tiles[$w.id] = $w.rect } }
+  Check "CT-20pre" ($(if ($tiles.Count -ge 3) { "PASS" } else { "FAIL" })) "precondition: three tiled windows on workspace 1" ($tiles.Keys -join ",")
+  [void](Cmd ":xtile :goto 2")
+  Check "CT-20a" ($(if (WaitFor { (Parked $i0) -and (Parked $i1) -and (Parked $i2) } 8) { "PASS" } else { "FAIL" })) "goto 2 parks all of workspace 1 off-screen (they stay windows, in the taskbar)" ("current=" + (State).current + " frames: " + ((@($i0,$i1,$i2) | ForEach-Object { (Frame ([IntPtr]::new([int64]$_))) -join "," }) -join " | "))
+  Check "CT-20b" ($(if ((State).current -eq "2") { "PASS" } else { "FAIL" })) "... and the core is on workspace 2" ("current=" + (State).current)
+  $N7 = Launch; $i7 = Id $N7; $h7 = $N7.MainWindowHandle
+  $okn = WaitFor { (Has $i7) } 10
+  Start-Sleep 2
+  Check "CT-20c" ($(if ($okn -and (SameFrame $i7 (Win $i7).rect) -and (Win $i7).rect) { "PASS" } else { "FAIL" })) "a window opened on workspace 2 is tiled there, on screen" ("win=" + ((Win $i7) | ConvertTo-Json -Compress) + " frame=" + ((Frame $h7) -join ","))
+  Check "CT-20d" ($(if ((Parked $i0) -and (Parked $i1) -and (Parked $i2)) { "PASS" } else { "FAIL" })) "workspace 1's windows are still parked after the poll (the poll must not drag them back)" ""
+  [void](Cmd ":xtile :goto 1")
+  $back = WaitFor { (SameFrame $i0 ($tiles[$i0])) -and (SameFrame $i1 ($tiles[$i1])) -and (SameFrame $i2 ($tiles[$i2])) } 8
+  Check "CT-20e" ($(if ($back) { "PASS" } else { "FAIL" })) "goto 1 brings workspace 1 back to exactly the tiles it had" ((@($i0,$i1,$i2) | ForEach-Object { (Frame ([IntPtr]::new([int64]$_))) -join "," }) -join " | ")
+  Check "CT-20f" ($(if (Parked $i7) { "PASS" } else { "FAIL" })) "... and workspace 2's window is parked" ("frame=" + ((Frame $h7) -join ","))
+  # send: the focused window moves to workspace 2
+  if (FocusConfirmed $h1 $i1) {
+    [void](Cmd ":xtile :send 2")
+    $okp = WaitFor { (Parked $i1) -and ((Win $i1).tag -eq "2") } 8
+    Start-Sleep 2
+    $rest = @($i0, $i2) | Where-Object { Win $_ }
+    $fine = ($rest.Count -eq 2) -and (SameFrame $i0 (Win $i0).rect) -and (SameFrame $i2 (Win $i2).rect)
+    Check "CT-21a" ($(if ($okp) { "PASS" } else { "FAIL" })) "send 2 moves the focused window to workspace 2 and parks it" ("win=" + ((Win $i1) | ConvertTo-Json -Compress))
+    Check "CT-21b" ($(if ($fine) { "PASS" } else { "FAIL" })) "... the remaining windows re-tile to fill the screen" ((@($i0,$i2) | ForEach-Object { (Frame ([IntPtr]::new([int64]$_))) -join "," }) -join " | ")
+    [void](Cmd ":xtile :goto 2")
+    $both = WaitFor { (-not (Parked $i1)) -and (-not (Parked $i7)) -and (Parked $i0) -and (Parked $i2) } 8
+    Start-Sleep 2
+    Check "CT-21c" ($(if ($both -and (SameFrame $i1 (Win $i1).rect) -and (SameFrame $i7 (Win $i7).rect)) { "PASS" } else { "FAIL" })) "workspace 2 now shows the window that was sent and the one opened there, tiled" ("n1=" + ((Frame $h1) -join ",") + " n7=" + ((Frame $h7) -join ","))
+    [void](Cmd ":xtile :goto 1")
+    [void](WaitFor { -not (Parked $i0) } 8)
+    Start-Sleep 2
+  } else {
+    Check "CT-21a" "FAIL" "send 2 (precondition: focus reached the window)" ("os_focus=" + (State).os_focus)
+  }
+
+  # ---- virtual desktops (ADR 0006 D-4): only the current Windows desktop is managed ----
   Focus $h2; Start-Sleep 1
   Chord 0x44   # Win+Ctrl+D: new desktop 2, switch to it
-  Check "CT-12a" ($(if (WaitFor { (State).current -eq "2" } 8) { "PASS" } else { "FAIL" })) "switching to a new desktop makes the core's current workspace 2" ("current=" + (State).current)
+  $gone = WaitFor { -not (Has $i0) -and -not (Has $i2) } 8
+  Check "CT-12a" ($(if ($gone) { "PASS" } else { "FAIL" })) "on a new Windows desktop the previous desktop's windows are no longer managed" ("ids in core: " + (((State).windows | ForEach-Object { $_.id }) -join ","))
   $N3 = Launch; $i3 = Id $N3
-  $ok = WaitFor { (Has $i3) -and ((Win $i3).tag -eq "2") } 10
-  Check "CT-12b" ($(if ($ok) { "PASS" } else { "FAIL" })) "a window opened on desktop 2 is tagged 2" ("win=" + ((Win $i3) | ConvertTo-Json -Compress))
+  $ok = WaitFor { (Has $i3) } 10
+  Check "CT-12b" ($(if ($ok) { "PASS" } else { "FAIL" })) "a window opened on that desktop is managed" ("win=" + ((Win $i3) | ConvertTo-Json -Compress))
   $leaf1 = Count 'leaf-set-focus-to-hwnd'; $supp1 = Count 'suppressed Jwno'; $pf1 = Count 'port-focus'
   Chord 0x25   # Win+Ctrl+Left: back to desktop 1
-  $ok = WaitFor { (State).current -eq "1" } 8
-  Check "CT-12c" ($(if ($ok) { "PASS" } else { "FAIL" })) "switching back makes the core's current workspace 1" ("current=" + (State).current)
+  $ok = WaitFor { (Has $i0) -and (Has $i2) -and (-not (Has $i3)) } 10
+  Check "CT-12c" ($(if ($ok) { "PASS" } else { "FAIL" })) "back on desktop 1 its windows are managed again, desktop 2's is not" ("ids in core: " + (((State).windows | ForEach-Object { $_.id }) -join ","))
   Start-Sleep 2
   $leaf2 = Count 'leaf-set-focus-to-hwnd'; $supp2 = Count 'suppressed Jwno'; $pf2 = Count 'port-focus'
   $own = $leaf2 - $leaf1 - ($pf2 - $pf1)
   Check "CT-13a" ($(if ($own -le 0) { "PASS" } else { "FAIL" })) "A: Jwno does not refocus after the desktop switch (leaf focus calls not explained by the adapter's own :focus)" "leaf $leaf1 -> $leaf2, adapter :focus $pf1 -> $pf2 (new windows may legitimately take focus)"
   Check "CT-13b" ($(if (($supp2 - $supp1) -eq 1) { "PASS" } else { "FAIL" })) "A: exactly one wm :set-focus was swallowed by that switch" "suppressed $supp1 -> $supp2"
-  $t1 = (Win $i1).tag; $t2 = (Win $i2).tag
-  Check "CT-14" ($(if ($t1 -eq "1" -and $t2 -eq "1" -and (Has $i3) -and (Win $i3).tag -eq "2") { "PASS" } else { "FAIL" })) "the desktop round trip kept every window's workspace (and desktop 2's window is still known)" "tags: n1=$t1 n2=$t2 n3=$((Win $i3).tag)"
+  $okt = WaitFor { (Has $i0) -and (Has $i2) -and (Win $i0).rect -and (SameFrame $i0 (Win $i0).rect) } 8
+  Check "CT-14" ($(if ($okt) { "PASS" } else { "FAIL" })) "the windows of desktop 1 are tiled again after the round trip" ("n0=" + ((Frame $h0) -join ",") + " core=" + ((Win $i0).rect -join ","))
   $before = Frame $h0
   DragTitleBar $h0 -150 120
   Check "CT-17g" ($(if (WaitFor { (Win $i0).floating -eq $true } 6) { "PASS" } else { "FAIL" })) "after a virtual-desktop round trip the move hook still works" ("floating=" + (Win $i0).floating)
@@ -274,7 +327,31 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-15" "INFO" "foreground after returning (the OS's own choice, since Jwno's refocus is suppressed)" ("fg=" + [C]::GetForegroundWindow().ToInt64() + " ids=$i0,$i1,$i2,$i3")
 }
 
-foreach ($p in @($N0, $N1, $N2, $N3, $N6)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+
+if (-not $j.HasExited -and $started) {
+  # ---- ADR 0006 H1: nothing is left off-screen behind us ----
+  [void](Cmd ":xtile :goto 2")
+  [void](WaitFor { (Parked $i0) } 8)
+  $wasParked = (Parked $i0)
+  [void](Cmd "quit")
+  [void]$j.WaitForExit(15000)
+  Start-Sleep 2
+  $ids = @($i0, $i2) | Where-Object { $_ }
+  Check "CT-22a" ($(if ($wasParked -and $j.HasExited -and -not (Parked $i0) -and -not (Parked $i2)) { "PASS" } else { "FAIL" })) "quitting Jwno brings every parked window back on screen" ("parked before=$wasParked exited=" + $j.HasExited + " n0=" + ((Frame $h0) -join ","))
+  # a crash: park again under a fresh Jwno, kill it without a chance to clean up, start another
+  $j = StartJwno
+  [void](WaitFor { (Has $i0) } 12)
+  [void](Cmd ":xtile :goto 2")
+  [void](WaitFor { (Parked $i0) } 8)
+  $stuck = $false
+  Stop-Process -Id $j.Id -Force; Start-Sleep 2
+  $stuck = (Parked $i0)
+  Check "CT-22b" "INFO" "a killed Jwno leaves the parked windows off-screen (the failure mode that recovery exists for)" "parked after kill=$stuck"
+  $j = StartJwno
+  $rec = WaitFor { -not (Parked $i0) } 12
+  Check "CT-22c" ($(if ($stuck -and $rec) { "PASS" } else { "FAIL" })) "starting Jwno again recovers windows a previous run left off-screen" ("n0=" + ((Frame $h0) -join ",") + " stuck=$stuck")
+}
+foreach ($p in @($N0, $N1, $N2, $N3, $N6, $N7)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
 if (-not $j.HasExited) { Stop-Process -Id $j.Id -Force }
 
 $results | ConvertTo-Json -Depth 4 | Out-File -Encoding utf8 (Join-Path $Out "contract-results.json")

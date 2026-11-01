@@ -672,3 +672,15 @@
   ((w :move-cb) (hw 4))
   (pump-tick! a)
   (is (not (st/floating? (state-of a) 4))))
+
+(deftest "the :xtile command takes a bare number as a workspace tag (easier to type in jwno.exe -x)"
+  (def w (fake-world))
+  (def a (install-adapter w {:keymap (w :keymap) :bindings []}))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  ((w :xtile-command) :goto 2)
+  (is= "2" ((state-of a) :current))
+  ((w :xtile-command) :goto "1")
+  (is= "1" ((state-of a) :current))
+  ((w :xtile-command) :focus-next)                 # other commands are untouched
+  (is= "1" ((state-of a) :current)))

@@ -403,7 +403,14 @@
 
   (when-let [keymap (opts :keymap)]
     (:add-command (in context :command-manager) :xtile
-                  (fn [& args] (dispatch! [:command ;args])))
+                  (fn [& args]
+                    # `jwno.exe -x ":xtile :goto 2"`: a workspace tag is a string in the core, but a bare
+                    # number is much easier to type (and to quote) on a command line
+                    (def [name & rest] args)
+                    (def rest* (if (index-of name [:goto :send])
+                                 (map |(if (number? $) (string $) $) rest)
+                                 rest))
+                    (dispatch! [:command name ;rest*])))
     (each b (get opts :bindings [])
       (def built (km/build [b] tags))
       (if (empty? (built :errors))
