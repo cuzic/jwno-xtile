@@ -145,6 +145,9 @@ function Count($pattern) { @(LogLines | Where-Object { $_ -match $pattern }).Cou
 
 # ---- 0. a window that exists BEFORE Jwno starts ----
 $N0 = Launch; $i0 = Id $N0
+# Packaged apps (Windows 11 Notepad) show up in the UI Automation tree a little after their window exists; Jwno's start-up scan
+# only sees what is there (real run 3: N0 was missed). Give it time, so CT-3 measures the adapter and not that lag.
+Start-Sleep -Seconds 6
 
 $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Path $Out "contract-jwno.log"),
            "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:$ReplPort")
