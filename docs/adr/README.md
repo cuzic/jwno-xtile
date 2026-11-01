@@ -10,7 +10,7 @@
 | [0003](0003-ai-assisted-development-workflow.md) | AI 支援開発のワークフローと検証の強制方法 | **Accepted** |
 | [0004](0004-core-emits-rects.md) | Core は Frame 操作ではなく矩形を出力する | Proposed (要スパイク) |
 | [0005](0005-effect-execution-and-drift-recovery.md) | 観測原則・effect の実行規約・ずれの回復 | **Accepted** |
-| [0006](0006-workspace-and-monitor-model.md) | ワークスペースの実装方式とモニタモデル | Proposed (未決) |
+| [0006](0006-workspace-and-monitor-model.md) | ワークスペースの実装方式（WM 内のグループ。park で隠す）とモニタモデル | **Accepted**（実装・ホスト型 Windows で検証済み。実機は未検証） |
 | [0007](0007-xmonad-compatibility-scope.md) | xmonad 互換の範囲と管理対象ウィンドウ | **Accepted** |
 | [0008](0008-window-classification-and-floating.md) | ウィンドウの振り分け（tile/float/ignore）とフロート管理 | **Accepted**（実装中） |
 | [0009](0009-shell-runtime-and-port.md) | Shell は「ポート越しの実行系」と Jwno アダプタに分ける | **Accepted**（runtime と C は実装済み。緩和策 A+C は暫定。アダプタ未実装） |

@@ -111,29 +111,15 @@ snapshot の `append` で入るので、ADR 0008 の「insertUp で新規扱い�
 `handle-display-changed` の `(:set-focus wm cur-frame)` は A の対象外（デスクトップ切替ではない）なので、**抑止しない**。その後の
 フォーカスは Jwno の選択に従い、観測（`focus-changed`）で Core が追従する。
 
-### D8 タグとデスクトップ — 読み取り専用の対応を段階 1 から入れる（レビュー M-C）
-ADR 0006（ワークスペースの実装方式）は未決だが、観測だけは決めておける。Core のタグは固定の `"1"`〜`"9"`（`install` の opts）とし、
-**仮想デスクトップの番号 → タグ**の読み取り専用の対応を使う:
-- 番号は Jwno の `(:get-all-desktops vd-man)`（registry を同期で読み、キャッシュする。yield しない。`[index guid name]` の列で、index は 1 始まり）の
-  `index`。デスクトップをまだ作っていない環境では列が空で、既定の 1 つ → `"1"`。guid の書式は Jwno の `format-guid`（大文字・波括弧付き）に
-  そろえる（`win32` の `GetWindowDesktopId` の結果も同じ書式に直す）。
-- **対応できない VD（番号が 10 以上、キャッシュにない guid）の窓は Core に渡さない**（`window-seen` を流さず、snapshot から除く。既知なら
-  snapshot から消えることで幽霊として除去される）。**tag nil は ADR 0005 の本来の意味（本当に不明）だけに使い、ここでは使わない**
-  （使うと別の VD の窓が見えているワークスペースに入る）。guid の照合に失敗したら、アダプタが `(:get-all-desktops vd-man true)`
-  （同期）でキャッシュを読み直してからもう一度照合する（新しい VD の作成直後や、切替を伴わない削除でキャッシュが古い場合に備える）。
-- Core のタグは `"1"`〜`"9"` と、**予約タグ `"0"`**（窓は入れない。keymap の既定束縛は先頭の 9 個だけなので束縛されない）。
-  `virtual-desktop-changed` の guid が引けない（対応できない VD にいる）ときは `[:desktop-changed "0"]` を流す。Core から見える窓が無く、
-  見えない VD の窓へ `:focus` を出さない。
-- **起動時**（ADR 0009 R-7 を改訂）: `start` は `windows-observed` より**前に** `[:desktop-changed (current-desktop)]` を流す（引けなければ
-  `"0"`）。流さないと Core の `:current` が `"1"` のまま OS とずれ、最初の `:focus` が暗黙のデスクトップ切替を起こす（レビュー N1）。
-- `window-created` の `desktop-info :id`、snapshot の窓ごとの guid（`win32` の `GetWindowDesktopId`）、`virtual-desktop-changed` の `guid` から
-  tag を引く。`virtual-desktop-changed` は `[:desktop-changed tag]`。Core の R1・T2・`windows-observed` の tag 修正がそのまま効くので、
-  ワークスペースごとの順序とフロートの切替は VD の往復で失われない。
-- Core は見えているワークスペースの窓にしか `:focus` を出さない（Q5）ので、暗黙のデスクトップ切替は起きない。
-- **`:goto` / `:send` は束縛せず、ポートは投げる**（段階 1 ではユーザーが命じない限り Core は出さない）。VD の作成・削除・並べ替えによる
-  番号のずれは段階 2 で扱い、段階 1 では「ずれたら snapshot で直る」程度とする。これは ADR 0006 の案 1（VD = ワークスペース）の
-  読み取り側だけを先取りする。案 2（自前の hide/show）が選ばれたら対応は作り直す。
-- **段階 2**（ADR 0006 の決定後）: `:goto`/`:send` の実装、A の本番運用、番号のずれへの対処。
+### D8 タグとデスクトップ — **ADR 0006（2026-11-01）で置き換え**
+当初の D8（Windows の仮想デスクトップの番号 → WM のタグの読み取り専用の対応、予約タグ `"0"`、起動時の `desktop-changed`）は、ADR 0006 の実験（他プロセスの窓を
+別デスクトップへ動かせない、修飾キーを押したままではデスクトップを切り替えられない）により**廃止**した。現在の仕様:
+- ワークスペースは WM 内のグループで、Windows の仮想デスクトップとは独立。Core は仮想デスクトップを知らない（ADR 0006）。
+- **現在の仮想デスクトップの窓だけ**を Core に渡す。窓ごとに `win32` の `:on-current-desktop?`（`IVirtualDesktopManager::IsWindowOnCurrentVirtualDesktop`。Windows に直接聞く）で判定する。
+  Jwno の `last-vd` は、起動時に窓のデスクトップ ID と比較できない値を持つので使わない（契約テスト CT-3 で判明）。`virtual-desktop-changed` では `[:windows-observed (enumerate)]` で同期する。
+- タグは常に nil（Core が持つワークスペースにそのまま入る）。`:enumerate` の窓は常に tag nil。`:current-desktop` ポートと `desktop-changed` の送出は無い。
+- `:goto`／`:send` のポートは何もしない（Core の `[:hide]`／`[:show]` が実体。アダプタが窓を画面外へ park／復元する）。`:xtile :goto 2` のように数値でタグを書ける。
+- 段階 2 の「VD の番号とタグの対応」は不要になった。
 
 ### D9 ユーザーのドラッグ／リサイズと、窓の位置のずれ（2026-10-31 追記。Opus のレビュー 2 回を反映。ホスト型 Windows の契約テストで検証済み）
 契約テスト（CT-1）で `jw32` に `SetWinEventHook`・`PeekMessage`・`DispatchMessage` があると分かったので、ADR 0005 §3-5 を実装する。二つの経路を分ける:

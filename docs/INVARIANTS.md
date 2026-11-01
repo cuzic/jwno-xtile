@@ -95,3 +95,12 @@
 - Q4 `:pending-focus` の `target` は常にスタック内の窓で、`:tag` は `:tags` のどれか（I1/I4 と並ぶ状態の整合）。
 - Q5（E2 の拡張）全ての `:focus` effect の対象は `:current` のワークスペースの窓（Core が暗黙の `:goto` を起こさない）。
 - K3（例外）`:reassert-focus` は束縛不可。keymap は `:internal` を含む未知の種類を拒否する（`case` の既定は拒否）。
+
+## Workspace visibility（ADR 0006。Draft、`test/update-test.janet` と `test/property-test.janet` で検査済み）
+`vis(s)` = 可視ワークスペースの窓、`all(s)` = 全ワークスペースの窓。
+- H-a `[:hide id]` の対象は、新しい state で `all` にあり、`vis` に無い窓だけ（閉じた窓・ユーザーが最小化した窓・幽霊には出ない）。
+- H-b `[:show id]` の対象は、新しい `vis` にあり、旧の `all` にあって旧の `vis` に無かった窓だけ（新規の窓や snapshot で追加された窓は、すでに画面にあるので出ない）。
+- H-c ミラー: hide／show の effect と、可視ワークスペースに直接現れた窓だけを適用した「画面にある窓の集合」は、常に `vis(s)` と一致する。
+- H-d 同じ窓に `hide` と `show` を同時に出さない。重複しない。`vis` に無い窓に `:place` を出さない（`:show` されるフロートにも `:place` は出ない）。
+- H-e すでに隠れている窓に `hide` を出し直さない。ただし `:refresh` は、park を保つために、可視でないワークスペースの窓すべてに `hide` を出し直す。
+- 順序: `hide` → `show` → `place` → `focus`（`:goto`／`:send` が先頭）。

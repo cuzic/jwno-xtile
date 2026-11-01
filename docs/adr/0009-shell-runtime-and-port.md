@@ -24,7 +24,7 @@ ADR 0001/0005 は Shell の規約（state を保存してから effect を実行
 （アダプタ。**今回は作らない**。契約テストとセットで作る）。
 
 ### ポート `ctx`（dictionary of function。すべて OS 境界）
-- 実行: `:place (id rect)` `:focus (id)` `:close (id)` `:goto (tag)` `:send (id tag)`。
+- 実行: `:place (id rect)` `:focus (id)` `:close (id)` `:goto (tag)` `:send (id tag)` `:hide (id)` `:show (id)`（ADR 0006: 可視でないワークスペースへ移す／戻す）。
 - 観測: `:foreground () -> id|nil` は **正規化しない**トップレベルの hwnd（`GA_ROOT`。所有者へ寄せない）。
   ADR 0008 で owned ダイアログが管理対象のフロートになったため、所有者へ寄せると「ダイアログを見ているのに
   所有者を close」になる（レビュー H1）。`:foreground-is? (id) -> bool` は **完全一致**。
@@ -159,3 +159,8 @@ A が使えない場合は C 単独に退化し、C が使えない設定（`:re
 の結果の `:focus` が実行されても再発行は連鎖しない（pending が下りている）／RT-9（`:goto` の失敗を含む）通知を遅延・重複・欠落させても、通知が止まった後に refresh と観測でモデルと OS が一致。特に「close キーとフォーカス通知を逆順に届けても誤 close
   しない」（ADR 0005 Confirmation）、effect が投げても state が保存済み、再入しない、回復が有限回で止まる。
 - 実装前に Opus レビュー。アダプタは別 ADR/タスクで契約テストと共に。
+
+## 追記（2026-11-01、ADR 0006）
+- ポートに `:hide (id)` と `:show (id)` を加えた（ランタイムは Core の `[:hide]`／`[:show]` effect を実行する。順序は hide → show → place → focus）。
+- R-7 の `[:desktop-changed (current-desktop)]` と `:current-desktop` ポートは、Jwno アダプタでは使わない（ADR 0006 D-4）。ランタイム側の対応は残す（他のアダプタ向け）。
+- R-10（`:goto` 後の `:reassert-focus`）は、`:goto` が OS のデスクトップ切替を起こさなくなったので、Jwno の再フォーカスとの競合が無い。アダプタの `:reassert?` の既定は false。
