@@ -57,3 +57,8 @@
   個人パスなども含まれない。(d) NOTICE は xmonad の全文を含み最新。
 - 未確認: (a) tall との比較は、checkout を削除済みのため行えない（再 clone しない）。
   VirtualDesktopAccessor のライセンスは、これを同梱・配布する時点まで未確認。
+
+## 独立性の記録（2026-11-01）
+`docs/references/jwno-ecosystem.md`（Opus による公開情報の調査）によると、jwno-layout-tall の PR #1 の説明文には、「起動時に既に開いている窓を登録する」「Jwno の現在のフレームより OS の前面の窓を信用する」がある。
+本プロジェクトは同じ結論に、実機の契約テストの失敗（`docs/spike/2026-11-01-real-machine.md` の発見 1。CT-3 の失敗から Jwno のソース `win.janet` の読解で原因を特定）と ADR 0005 の観測原則から、独立に到達した。
+PR #1 の記述を読んだのは、この調査が初めてで、実装（`adopt-existing!`）の後である（コミット履歴で確認できる）。調査はソースコードを読まず、README・PR の説明・コミットメッセージの要旨に限った。
