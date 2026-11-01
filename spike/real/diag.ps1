@@ -18,3 +18,8 @@ Test-Path (Join-Path $Work "repo\spike\contract-config.janet")
 "===== jwno.exe"
 (Get-Item (Join-Path $Work "jwno.exe") -ErrorAction SilentlyContinue | Select-Object Length, LastWriteTime | Out-String).Trim()
 "===== running jwno: " + (@(Get-Process jwno -ErrorAction SilentlyContinue).Count)
+"===== where did contract.log go? (only files with our own name)"
+foreach ($d in @($Work, (Join-Path $Work "out"), $env:USERPROFILE, (Join-Path $Work "repo"))) {
+  $f = Join-Path $d "contract.log"
+  if (Test-Path $f) { "FOUND $f  " + (Get-Item $f).Length + " bytes, " + (Get-Item $f).LastWriteTime; Get-Content $f -TotalCount 8 | ForEach-Object { if ($_.Length -gt 220) { $_.Substring(0, 220) } else { $_ } } } else { "none: $f" }
+}
