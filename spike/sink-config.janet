@@ -7,6 +7,7 @@
 (use jw32/_winuser)
 (use jw32/_libloaderapi)
 (use jw32/_errhandlingapi)
+(use jw32/_util)               # null?, ...
 (import jwno/util)
 
 (def out-path (or (os/getenv "SINK_OUT") "sink.log"))
