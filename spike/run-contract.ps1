@@ -1,7 +1,9 @@
 # Contract tests for the xtile adapter on a REAL Jwno (ADR 0010, stage 2).  Hosted Windows Server only:
 # a pass here is not a pass on a user's Windows 10/11 desktop.
 # Every check records PASS / FAIL / INFO with the evidence; FAIL makes the script exit 1.
-param([string]$Jwno, [string]$RepoRoot, [string]$Config, [string]$Out = "spike-out")
+param([string]$Jwno, [string]$RepoRoot, [string]$Config, [string]$Out = "spike-out",
+      # clipwire's own server listens on 9999 on the real machine: Jwno's REPL must not collide with it
+      [int]$ReplPort = 9999)
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
@@ -78,7 +80,7 @@ function FocusConfirmed($h, $id) {
 }
 function StartJwno() {
   $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Path $Out "contract-jwno.log"),
-             "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:9999")
+             "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:$ReplPort")
   $before = Count ' started'
   $p = Start-Process -FilePath $Jwno -ArgumentList $jargs -PassThru
   [void](WaitFor { (Count ' started') -gt $before } 25)
@@ -105,14 +107,14 @@ function WaitFor([scriptblock]$pred, [int]$sec = 10) {
 }
 function Has($id) { $s = State; [bool]($s -and ($s.windows | Where-Object { $_.id -eq $id })) }
 function Win($id) { $s = State; if ($s) { $s.windows | Where-Object { $_.id -eq $id } | Select-Object -First 1 } }
-function Cmd($c) { (& $Jwno -x $c 2>&1 | Out-String).Trim() }
+function Cmd($c) { (& $Jwno --repl "127.0.0.1:$ReplPort" -x $c 2>&1 | Out-String).Trim() }
 function Count($pattern) { @(LogLines | Where-Object { $_ -match $pattern }).Count }
 
 # ---- 0. a window that exists BEFORE Jwno starts ----
 $N0 = Launch; $i0 = Id $N0
 
 $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Path $Out "contract-jwno.log"),
-           "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:9999")
+           "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:$ReplPort")
 $j = Start-Process -FilePath $Jwno -ArgumentList $jargs -PassThru
 $started = WaitFor { (Count ' started') -gt 0 -or (Count 'import-error|install-error|start-error') -gt 0 } 25
 $imports = @(LogLines | Where-Object { $_ -match 'import-error|install-error|start-error' })

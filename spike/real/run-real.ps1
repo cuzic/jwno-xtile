@@ -83,7 +83,7 @@ try {
   $env:CONTRACT_OUT = Join-Path $Out "contract.log"
   $pw = "C:\Program Files\PowerShell\7\pwsh.exe"
   $cfg = Join-Path $RepoRoot "spike\contract-config.janet"
-  & $pw -NoProfile -File (Join-Path $RepoRoot "spike\run-contract.ps1") -Jwno $Jwno -RepoRoot $RepoRoot -Config $cfg -Out $Out *>&1 | Add-Content -Path (Join-Path $Out "contract-console.log") -Encoding utf8
+  & $pw -NoProfile -File (Join-Path $RepoRoot "spike\run-contract.ps1") -Jwno $Jwno -RepoRoot $RepoRoot -Config $cfg -Out $Out -ReplPort 19999 *>&1 | Add-Content -Path (Join-Path $Out "contract-console.log") -Encoding utf8
   $exit = $LASTEXITCODE
   P "contract script finished, exit=$exit"
 } catch {
@@ -93,7 +93,7 @@ try {
   # 1. Jwno: graceful, then forced
   $js = @(Get-Process jwno -ErrorAction SilentlyContinue)
   if ($js.Count -gt 0) {
-    & $Jwno -x quit 2>&1 | Out-Null
+    & $Jwno --repl "127.0.0.1:19999" -x quit 2>&1 | Out-Null
     foreach ($j in $js) { [void]$j.WaitForExit(20000) }
     Get-Process jwno -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   }
