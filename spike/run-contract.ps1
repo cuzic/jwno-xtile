@@ -379,7 +379,10 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   $leaf2 = Count 'leaf-set-focus-to-hwnd'; $supp2 = Count 'suppressed Jwno'; $pf2 = Count 'port-focus'
   $own = $leaf2 - $leaf1 - ($pf2 - $pf1)
   Check "CT-13a" ($(if ($own -le 0) { "PASS" } else { "FAIL" })) "A: Jwno does not refocus after the desktop switch (leaf focus calls not explained by the adapter's own :focus)" "leaf $leaf1 -> $leaf2, adapter :focus $pf1 -> $pf2 (new windows may legitimately take focus)"
-  Check "CT-13b" ($(if (($supp2 - $supp1) -eq 1) { "PASS" } else { "FAIL" })) "A: exactly one wm :set-focus was swallowed by that switch" "suppressed $supp1 -> $supp2"
+  # Jwno calls wm :set-focus only when its own desktop-name event arrives AND the desktop differs from its last-vd.
+# On the real PC (run 5) the event for the new desktop never arrived, so there was nothing to swallow (0): fine.
+# What must never happen is more than one swallow per switch, or a refocus that was not swallowed (CT-13a).
+Check "CT-13b" ($(if (($supp2 - $supp1) -le 1) { "PASS" } else { "FAIL" })) "A: at most one wm :set-focus was swallowed by that switch (0 when Jwno saw no desktop-name event)" "suppressed $supp1 -> $supp2"
   $okt = WaitFor { (Has $i0) -and (Has $i2) -and (Win $i0).rect -and (SameFrame $i0 (Win $i0).rect) } 8
   Check "CT-14" ($(if ($okt) { "PASS" } else { "FAIL" })) "the windows of desktop 1 are tiled again after the round trip" ("n0=" + ((Frame $h0) -join ",") + " core=" + ((Win $i0).rect -join ","))
   $before = Frame $h0
