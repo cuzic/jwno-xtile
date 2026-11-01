@@ -139,18 +139,23 @@
     (def fresh @{})
     (def out @[])
     (each win (:get-window-stack (in wm :root))
+      (var step :start)
       (def [ok entry]
         (protect
           (let [hwnd (in win :hwnd)
-                id (norm hwnd)]
+                id (do (set step :norm) (norm hwnd))]
             (when id
-              (def tag (tag-of-guid (w :desktop-guid hwnd)))
+              (set step :desktop-guid)
+              (def guid (w :desktop-guid hwnd))
+              (set step :tag)
+              (def tag (tag-of-guid guid))
               (unless (= tag :unmappable)
                 (put fresh id (get num->hwnd id))
+                (set step :facts)
                 [id tag (facts-of id hwnd)])))))
       (if ok
         (when entry (array/push out entry))
-        (log-fn :warn (string "enumerate: skipped a window: " entry))))
+        (log-fn :warn (string "enumerate: skipped a window (step " step ", hwnd " (in win :hwnd) "): " entry))))
     # replace, do not accumulate: windows whose :window-removed never came must not pile up
     (table/clear num->hwnd)
     (eachp [k v] fresh (put num->hwnd k v))
