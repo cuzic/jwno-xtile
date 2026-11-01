@@ -305,7 +305,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   $leaf0 = Count 'leaf-set-focus-to-hwnd'
   [void](Cmd ":xtile :focus-next"); Start-Sleep 2
   $fg = [C]::GetForegroundWindow().ToInt64()
-  Check "CT-10" ($(if ($fg -ne $i2 -and @($i0,$i1,$i2) -contains $fg) { "PASS" } else { "FAIL" })) "a core command (focus-next) moves the real focus through the adapter's :focus" "fg=$fg was=$i2"
+  Check "CT-10" ($(if ($fg -ne $i2 -and (Has $fg)) { "PASS" } else { "FAIL" })) "a core command (focus-next) moves the real focus through the adapter's :focus" "fg=$fg was=$i2"
   Check "CT-10b" ($(if ((Count 'leaf-set-focus-to-hwnd') -gt $leaf0) { "PASS" } else { "FAIL" })) "... and it goes through Jwno's window :set-focus (not suppressed)" "leaf calls $leaf0 -> $(Count 'leaf-set-focus-to-hwnd')"
   $fgBefore = [C]::GetForegroundWindow().ToInt64()
   $r = Cmd ":enum-window-in-frame :next"; Start-Sleep 2
