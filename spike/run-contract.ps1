@@ -202,9 +202,14 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   $okd = WaitFor { (Win $i1).floating -eq $true } 6
   Start-Sleep 2
   $after = Frame $h1
-  $moved = ([math]::Abs($after[0] - $before[0]) -gt 40) -or ([math]::Abs($after[1] - $before[1]) -gt 40)
+  # The synthetic drag moves the window by far less than the cursor travelled (hosted-runner input), so
+  # the question is not "how far" but "did it end up somewhere else, and does it stay there".
+  $moved = ([math]::Abs($after[0] - $before[0]) -gt 4) -or ([math]::Abs($after[1] - $before[1]) -gt 4)
+  Start-Sleep 3
+  $later = Frame $h1
+  $stays = (($later -join ",") -eq ($after -join ","))
   Check "CT-17b" ($(if ($okd) { "PASS" } else { "FAIL" })) "dragging a tile floats it" ("floating=$okd")
-  Check "CT-17c" ($(if ($moved) { "PASS" } else { "FAIL" })) "... and it stays where it was dropped (is not pulled back)" ("frame before=" + ($before -join ",") + " after=" + ($after -join ","))
+  Check "CT-17c" ($(if ($moved -and $stays) { "PASS" } else { "FAIL" })) "... and it stays where it was dropped (is not pulled back, even after a poll)" ("frame before=" + ($before -join ",") + " after=" + ($after -join ",") + " 3s later=" + ($later -join ","))
   $nd = (Count ("window-dragged id=" + $i1)) - $drags0
   Check "CT-17d" ($(if ($nd -eq 1) { "PASS" } else { "FAIL" })) "exactly one window-dragged reaches the core for one drag (none while dragging)" "count=$nd"
   $s = State; $worst = 0; $diffs = @()
