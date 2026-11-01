@@ -16,6 +16,13 @@
 
 (defn- num [x] (if (number? x) x (int/to-number x)))
 
+(defn- unsigned-32
+  "GetWindowLong sometimes comes back already unsigned (a WS_POPUP window has bit 31 set): Jwno's
+  signed-to-unsigned-32 then throws 'out of range for 32-bit signed integers' (contract test log)."
+  [x]
+  (def v (num x))
+  (if (< v 0) (+ v 4294967296) v))
+
 (defn- true? [x] (not= FALSE x))
 
 (defn- opt
@@ -97,15 +104,15 @@
 (defn facts
   "classify's facts (ADR 0008). Win32 only -- no UIA, because the poll calls this for every window."
   [hwnd]
-  (def style (signed-to-unsigned-32 (GetWindowLong hwnd GWL_STYLE)))
-  (def ex-style (signed-to-unsigned-32 (GetWindowLong hwnd GWL_EXSTYLE)))
+  (def style (unsigned-32 (GetWindowLong hwnd GWL_STYLE)))
+  (def ex-style (unsigned-32 (GetWindowLong hwnd GWL_EXSTYLE)))
   # :class and :title are NOT here: this jw32 has no GetClassName/GetWindowText (contract test CT-1).
   # The adapter reads them from the UIA element in the :window-created hook.
   {:exe (guarded nil (fn [] (util/get-hwnd-path hwnd)))
    :visible? (true? (IsWindowVisible hwnd))
    :minimized? (minimized? hwnd)
-   :fullscreen? (fullscreen? hwnd (num style))
-   :tool-window? (not (zero? (band (num ex-style) ws-ex-toolwindow)))
+   :fullscreen? (fullscreen? hwnd style)
+   :tool-window? (not (zero? (band ex-style ws-ex-toolwindow)))
    :owned? (let [owner (GetWindow hwnd GW_OWNER)]
              # jw32 returns a NULL pointer, not nil, for "no owner" (Jwno itself tests `null?`)
              (not (or (nil? owner) (null? owner))))})

@@ -159,7 +159,9 @@
 
   (def ctx
     @{:place place
-      :focus (fn [id] (:set-focus (window-of id) wm))   # the WINDOW's :set-focus, never wm's (A-2)
+      :focus (fn [id]
+              (log-fn :debug (string/format "port-focus id=%q" id))
+              (:set-focus (window-of id) wm))   # the WINDOW's :set-focus, never wm's (A-2)
       :close (fn [id] (:close (window-of id)))
       :goto (fn [_] (error "goto is not supported in stage 1"))
       :send (fn [_ _] (error "send is not supported in stage 1"))

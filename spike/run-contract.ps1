@@ -156,13 +156,14 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   $N3 = Launch; $i3 = Id $N3
   $ok = WaitFor { (Has $i3) -and ((Win $i3).tag -eq "2") } 10
   Check "CT-12b" ($(if ($ok) { "PASS" } else { "FAIL" })) "a window opened on desktop 2 is tagged 2" ("win=" + ((Win $i3) | ConvertTo-Json -Compress))
-  $leaf1 = Count 'leaf-set-focus-to-hwnd'; $supp1 = Count 'suppressed Jwno'
+  $leaf1 = Count 'leaf-set-focus-to-hwnd'; $supp1 = Count 'suppressed Jwno'; $pf1 = Count 'port-focus'
   Chord 0x25   # Win+Ctrl+Left: back to desktop 1
   $ok = WaitFor { (State).current -eq "1" } 8
   Check "CT-12c" ($(if ($ok) { "PASS" } else { "FAIL" })) "switching back makes the core's current workspace 1" ("current=" + (State).current)
   Start-Sleep 2
-  $leaf2 = Count 'leaf-set-focus-to-hwnd'; $supp2 = Count 'suppressed Jwno'
-  Check "CT-13a" ($(if ($leaf2 -eq $leaf1) { "PASS" } else { "FAIL" })) "A: Jwno does not refocus after the desktop switch" "leaf calls $leaf1 -> $leaf2"
+  $leaf2 = Count 'leaf-set-focus-to-hwnd'; $supp2 = Count 'suppressed Jwno'; $pf2 = Count 'port-focus'
+  $own = $leaf2 - $leaf1 - ($pf2 - $pf1)
+  Check "CT-13a" ($(if ($own -le 0) { "PASS" } else { "FAIL" })) "A: Jwno does not refocus after the desktop switch (leaf focus calls not explained by the adapter's own :focus)" "leaf $leaf1 -> $leaf2, adapter :focus $pf1 -> $pf2 (new windows may legitimately take focus)"
   Check "CT-13b" ($(if (($supp2 - $supp1) -eq 1) { "PASS" } else { "FAIL" })) "A: exactly one wm :set-focus was swallowed by that switch" "suppressed $supp1 -> $supp2"
   $t1 = (Win $i1).tag; $t2 = (Win $i2).tag
   Check "CT-14" ($(if ($t1 -eq "1" -and $t2 -eq "1" -and (Has $i3) -and (Win $i3).tag -eq "2") { "PASS" } else { "FAIL" })) "the desktop round trip kept every window's workspace (and desktop 2's window is still known)" "tags: n1=$t1 n2=$t2 n3=$((Win $i3).tag)"
