@@ -441,9 +441,44 @@
               (move-to win {:x (wa :x) :y (wa :y) :w (min (rect :w) (wa :w)) :h (min (rect :h) (wa :h))})))))
       (unless ok (log-fn :warn (string "recover: " err)))))
 
+  (defn top-level-hwnds
+    "Every top-level window UI Automation knows (the desktop's children), as Jwno hwnds. Empty when
+    there is no UIA manager (the fake world of the unit tests)."
+    []
+    (def uia (get context :uia-manager))
+    (def found @[])
+    (when uia
+      (def [ok err]
+        (protect
+          (let [root (:get-root uia)
+                walker (:create-raw-view-walker uia)
+                cr (:create-cache-request uia @[30020])]   # UIA_NativeWindowHandlePropertyId
+            (:enumerate-children uia root
+                                 (fn [e]
+                                   (def h (protect (:get_CachedNativeWindowHandle e)))
+                                   (when (and (h 0) (h 1)) (array/push found (h 1)))
+                                   true)
+                                 walker cr)
+            (:Release cr) (:Release walker) (:Release root))))
+      (unless ok (log-fn :warn (string "top-level-hwnds: " err))))
+    found)
+
+  (defn adopt-existing!
+    "Jwno itself only manages the window that has the focus when it starts, and windows opened later
+    (real run 3: a window that existed before Jwno started was never managed). Offer every other
+    top-level window of this desktop to Jwno's own path (its filters and hooks decide)."
+    []
+    (each hwnd (top-level-hwnds)
+      (def [ok err]
+        (protect
+          (when (and (not (:find-hwnd (in wm :root) hwnd)) (on-current-desktop? hwnd))
+            (:window-opened wm hwnd))))
+      (unless ok (log-fn :debug (string "adopt-existing: " err)))))
+
   (defn start
     "Hooks are already registered (R-7): sync, then start polling."
     []
+    (adopt-existing!)
     (when (> (length (desktops)) 1)
       (log-fn :warn "more than one Windows virtual desktop: only the current one is managed, and switching desktops resets the WM state of the windows (ADR 0006 D-4)"))
     (recover-strays)

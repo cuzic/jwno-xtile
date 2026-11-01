@@ -44,12 +44,14 @@
     win)
 
   (def root
-    @{:get-window-stack (fn [self] (map |((w :windows) $) (w :order)))
+    @{:find-hwnd (fn [self hwnd] ((w :windows) (hwnd :ptr)))
+      :get-window-stack (fn [self] (map |((w :windows) $) (w :order)))
       :get-all-windows (fn [self] (values (w :windows)))})
   (def wm-proto
     @{:find-hwnd (fn [self hwnd] ((w :windows) (hwnd :ptr)))
       :enumerate-monitors (fn [self] [[{:work-area {:left 0 :top 0 :right 1000 :bottom 600}}] 0])
       :set-focus (fn [self node] (rec :wm-set-focus node))
+      :window-opened (fn [self hwnd] (rec :window-opened (hwnd :ptr)) ((w :add-window!) (hwnd :ptr)))
       :desktop-name-changed (fn [self name]
                               (rec :dnc name)
                               (when (w :dnc-throws) (error "boom"))
@@ -63,10 +65,17 @@
                           (when refresh (++ (w :refreshes)))
                           (w :desktops))})
   (def keymap @{:define-key (fn [self k cmd] (rec :define-key k cmd))})
+  (def uia-man
+    @{:get-root (fn [self] @{:Release (fn [_] nil)})
+      :create-raw-view-walker (fn [self] @{:Release (fn [_] nil)})
+      :create-cache-request (fn [self props] @{:Release (fn [_] nil)})
+      :enumerate-children (fn [self root f walker cr]
+                            (each n (w :top) (unless (f @{:get_CachedNativeWindowHandle (fn [_] (hw n))}) (break))))})
+  (put w :top @[])
   (def cmd-man @{:add-command (fn [self name f] (put w :xtile-command f))})
   (put w :wm wm)
   (put w :context @{:window-manager wm :hook-manager hook-man :virtual-desktop-manager vd-man
-                    :command-manager cmd-man})
+                    :command-manager cmd-man :uia-manager uia-man})
   (put w :keymap keymap)
   (put w :win32
        {:foreground-hwnd (fn [] (w :fg))
@@ -721,3 +730,12 @@
   (put w3 :win32 (merge (w3 :win32) {:on-current-desktop? (fn [_] (error "COM failed"))}))
   (install-adapter w3)
   (is ((get (w3 :hooks) :filter-window) (hw 7) :uia "x" nil)))
+
+(deftest "start offers top-level windows Jwno does not manage to Jwno (real run 3: only the focused one was managed)"
+  (def w (fake-world))
+  ((w :add-window!) 5)                 # managed already
+  (array/push (w :top) 5 6 7)          # UIA also lists 6 and 7
+  (def a (install-adapter w))
+  ((a :start))
+  (def opened (map |($ 1) (calls-of w :window-opened)))
+  (assert (deep= opened @[6 7]) (string/format "opened %q logs %q" opened (w :logs))))

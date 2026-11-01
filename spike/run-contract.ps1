@@ -147,7 +147,9 @@ function Count($pattern) { @(LogLines | Where-Object { $_ -match $pattern }).Cou
 $N0 = Launch; $i0 = Id $N0
 # Packaged apps (Windows 11 Notepad) show up in the UI Automation tree a little after their window exists; Jwno's start-up scan
 # only sees what is there (real run 3: N0 was missed). Give it time, so CT-3 measures the adapter and not that lag.
-Start-Sleep -Seconds 6
+Start-Sleep -Seconds 2
+# The window that has the focus when Jwno starts is the only one Jwno itself manages (real run 3). N0 must NOT be it.
+$NB = Launch
 
 $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Path $Out "contract-jwno.log"),
            "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:$ReplPort")
@@ -166,7 +168,8 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
 
   # ---- C7 / ids: existing + new windows, ids == hwnd (GA_ROOT) ----
   Check "CT-3" ($(if (WaitFor { Has $i0 } 12) { "PASS" } else { "FAIL" })) "a window that existed before Jwno started reaches the core, with id == its hwnd" "hwnd=$i0"
-  $N1 = Launch; $N2 = Launch; $i1 = Id $N1; $i2 = Id $N2
+  CloseWin $NB
+    $N1 = Launch; $N2 = Launch; $i1 = Id $N1; $i2 = Id $N2
   $ok = (WaitFor { (Has $i1) -and (Has $i2) } 12)
   Check "CT-4" ($(if ($ok) { "PASS" } else { "FAIL" })) "new windows reach the core as :window-seen, tag 1" ("ids=$i0,$i1,$i2 state=" + ((State).windows | ConvertTo-Json -Compress))
   Start-Sleep 3
