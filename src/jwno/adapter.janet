@@ -343,9 +343,11 @@
             (let [win (:find-hwnd wm hwnd)]
               (when (and win (not (w :minimized? hwnd)) (not (w :hung? hwnd)))
                 (def rect (visible-rect win))
-                (dispatch! (if (w :zoomed? hwnd)
-                             [:window-dragged id rect]
-                             [:window-moved id rect]))))))
+                (if (w :zoomed? hwnd)
+                  (do
+                    (log-fn :debug (string/format "compare: id=%q is maximised, rect=%q: floating it" id rect))
+                    (dispatch! [:window-dragged id rect]))
+                  (dispatch! [:window-moved id rect]))))))
         (unless ok (log-fn :warn (string "compare " id ": " err))))))
 
   (defn poll-once []

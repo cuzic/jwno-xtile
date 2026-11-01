@@ -146,6 +146,8 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
     $d -le 1 } 8
   Check "CT-6c" ($(if ($want -and $backed) { "PASS" } else { "FAIL" })) "with no button down, the poll puts a window that was moved programmatically back at the core's rect" ("frame=" + ((Frame $h2) -join ",") + " want=" + ($want -join ","))
 
+  $pre = Win $i2
+  Check "CT-7pre" ($(if ($pre -and $pre.floating -eq $false) { "PASS" } else { "FAIL" })) "precondition: the window we are about to maximise is still a tile" ($pre | ConvertTo-Json -Compress)
   # ---- maximize: the user's own action floats the tile (ADR 0010 D9 N3); it is not shrunk back ----
   [void][C]::ShowWindow($h2, 3)
   $okf = WaitFor { (Win $i2).floating -eq $true } 8
@@ -163,6 +165,8 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
   Check "CT-7c" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float puts it back into the tiling at the core's rect" ("floating=" + (Win $i2).floating + " frame=" + ($f -join ",") + " want=" + ($want -join ","))
 
+  $pre1 = Win $i1
+  Check "CT-17pre" ($(if ($pre1 -and $pre1.floating -eq $false) { "PASS" } else { "FAIL" })) "precondition: the window we are about to drag is a tile" ($pre1 | ConvertTo-Json -Compress)
   # ---- the user's mouse: a title-bar click floats nothing, a drag floats the tile where it was dropped ----
   $h0 = $N0.MainWindowHandle
   $w0 = (Win $i0).rect
