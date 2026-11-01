@@ -124,12 +124,6 @@ jobs:
         shell: pwsh
         run: ./xtile/spike/run-contract.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -RepoRoot "${{ github.workspace }}\xtile" -Config "${{ github.workspace }}\xtile\spike\contract-config.janet" -Out spike-out
 
-      - name: Sink window spike (ADR 0006 D-7b)
-        if: always()
-        continue-on-error: true
-        shell: pwsh
-        run: ./xtile/spike/run-sink.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -RepoRoot "${{ github.workspace }}\xtile" -Config "${{ github.workspace }}\xtile\spike\sink-config.janet" -Out spike-out -ReplPort 9998
-
       - name: Run Jwno with the probe config
         if: always()
         continue-on-error: true
@@ -161,6 +155,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path spike-out | Out-Null
           (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | ConvertTo-Json) | Out-File -Encoding utf8 spike-out/os-version.json
           Get-Content spike-out/os-version.json
+
+      - name: Sink window spike (ADR 0006 D-7b)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        shell: pwsh
+        run: ./xtile/spike/run-sink.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -RepoRoot "${{ github.workspace }}\xtile" -Config "${{ github.workspace }}\xtile\spike\sink-config.janet" -Out spike-out -ReplPort 9998
 
       - name: Upload logs
         if: always()

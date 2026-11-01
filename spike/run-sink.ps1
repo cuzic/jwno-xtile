@@ -35,7 +35,13 @@ function WaitFor([scriptblock]$pred, [int]$sec = 10) {
   return [bool](& $pred)
 }
 function Key([byte]$vk) { [S]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); [S]::keybd_event($vk, 0, 2, [UIntPtr]::Zero) }
-function Cmd($c) { (& $Jwno --repl "127.0.0.1:$ReplPort" -x $c 2>&1 | Out-String).Trim() }
+# A REPL call that never returns must not hang the job (it did once): 15 s, then give up.
+function Cmd($c) {
+  $o = Join-Path $Out "repl-out.txt"; $e = Join-Path $Out "repl-err.txt"
+  $p = Start-Process -FilePath $Jwno -ArgumentList @("--repl", "127.0.0.1:$ReplPort", "-x", $c) -PassThru -NoNewWindow -RedirectStandardOutput $o -RedirectStandardError $e
+  if (-not $p.WaitForExit(15000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; return "TIMEOUT after 15s" }
+  ((Get-Content $o -Raw -ErrorAction SilentlyContinue) + (Get-Content $e -Raw -ErrorAction SilentlyContinue)).Trim()
+}
 
 $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Path $Out "sink-jwno.log"),
            "--log-level", "debug", "--no-console", "--repl", "127.0.0.1:$ReplPort")
@@ -51,7 +57,7 @@ if ($line -and $line -match 'sink-created (\d+)') {
   # SK-2: responds to messages from another process (the UI thread pumps them), no adapter involved
   $r = [IntPtr]::Zero
   $t0 = Get-Date
-  $ok = [S]::SendMessageTimeout($h, 0, [IntPtr]::Zero, [IntPtr]::Zero, 2, 2000, [ref]$r)
+  $ok = [S]::SendMessageTimeout($h, 0, [IntPtr]::Zero, [IntPtr]::Zero, 2, 2000, [ref]$r)   # SMTO_ABORTIFHUNG, 2 s
   $ms = [int]((Get-Date) - $t0).TotalMilliseconds
   Check "SK-2" ($(if ($ok -ne [IntPtr]::Zero) { "PASS" } else { "FAIL" })) "the sink answers a message from another process (Jwno has no message pump of the adapter here)" "answered=$($ok -ne [IntPtr]::Zero) in ${ms}ms; IsHungAppWindow=$([S]::IsHungAppWindow($h))"
 
