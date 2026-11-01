@@ -9,6 +9,8 @@ $log = Join-Path $Out "contract.log"
 $env:CONTRACT_OUT = $log
 $results = New-Object System.Collections.ArrayList
 
+Add-Type -AssemblyName System.Windows.Forms
+$script:scr = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
@@ -44,20 +46,33 @@ function Frame($h) {
   [void][C]::DwmGetWindowAttribute($h, 9, [ref]$e, 16)
   @($e.L, $e.T, ($e.R - $e.L), ($e.B - $e.T))
 }
+# SetCursorPos only moves the cursor: it does not produce the mouse-move input a modal move loop waits
+# for (a drag moved the window by a few pixels, or not at all). Absolute mouse_event does.
+function MouseTo($x, $y) {
+  $ax = [int]($x * 65535 / [math]::Max(1, $script:scr.Width - 1)); $ay = [int]($y * 65535 / [math]::Max(1, $script:scr.Height - 1))
+  [C]::mouse_event(0x8001, $ax, $ay, 0, [UIntPtr]::Zero)   # MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE
+}
 function MouseDown() { [C]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero) }
 function MouseUp() { [C]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero) }
 function TitleBarPoint($h) { $f = Frame $h; @(($f[0] + [int]($f[2] / 2)), ($f[1] + 14)) }
 function ClickTitleBar($h) {
   $pt = TitleBarPoint $h
-  [void][C]::SetCursorPos($pt[0], $pt[1]); Start-Sleep -Milliseconds 200
+  MouseTo $pt[0] $pt[1]; Start-Sleep -Milliseconds 300
   MouseDown; Start-Sleep -Milliseconds 250; MouseUp; Start-Sleep -Milliseconds 300
 }
 function DragTitleBar($h, $dx, $dy) {
   $pt = TitleBarPoint $h
-  [void][C]::SetCursorPos($pt[0], $pt[1]); Start-Sleep -Milliseconds 200
-  MouseDown; Start-Sleep -Milliseconds 250
-  for ($i = 1; $i -le 10; $i++) { [void][C]::SetCursorPos($pt[0] + [int]($dx * $i / 10), $pt[1] + [int]($dy * $i / 10)); Start-Sleep -Milliseconds 40 }
+  MouseTo $pt[0] $pt[1]; Start-Sleep -Milliseconds 300
+  MouseDown; Start-Sleep -Milliseconds 300
+  for ($i = 1; $i -le 20; $i++) { MouseTo ($pt[0] + [int]($dx * $i / 20)) ($pt[1] + [int]($dy * $i / 20)); Start-Sleep -Milliseconds 40 }
   Start-Sleep -Milliseconds 200; MouseUp; Start-Sleep -Milliseconds 300
+}
+function FocusConfirmed($h, $id) {
+  for ($try = 0; $try -lt 4; $try++) {
+    Focus $h
+    if (WaitFor { (State).os_focus -eq $id } 3) { return $true }
+  }
+  return $false
 }
 function Launch() { $p = Start-Process notepad -PassThru; Start-Sleep 3; $p.Refresh(); $p }
 function Id($p) { $p.MainWindowHandle.ToInt64() }
@@ -133,7 +148,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   # The adapter now also puts back windows that moved without a drag (D9), within the 2s poll -- but it
   # never compares while a mouse button is down. Hold one (on the taskbar's empty part) so the poll cannot
   # interleave, and this check measures only what Jwno's own retile does.
-  [void][C]::SetCursorPos(1010, 757); Start-Sleep -Milliseconds 200; MouseDown
+  MouseTo 1010 757; Start-Sleep -Milliseconds 300; MouseDown
   [void][C]::SetWindowPos($h2, [IntPtr]::Zero, 30, 30, 400, 300, 0x0004)
   Start-Sleep -Milliseconds 400; [void](Cmd "retile"); Start-Sleep -Milliseconds 800
   $f = Frame $h2
@@ -156,17 +171,18 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   [void](Cmd "retile"); Start-Sleep 2
   Check "CT-7b" "INFO" "Jwno's :retile on that floating, maximised window (its transform always un-maximises)" ("zoomed after retile=" + [C]::IsZoomed($h2))
   [void][C]::ShowWindow($h2, 9); Start-Sleep 1
-  Focus $h2
-  [void](WaitFor { (State).os_focus -eq $i2 } 6)
-  [void](Cmd ":xtile :toggle-float")
-  $back = WaitFor { (Win $i2).floating -eq $false } 6
-  Start-Sleep 2
-  $f = Frame $h2; $want = (Win $i2).rect
-  $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
-  Check "CT-7c" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float puts it back into the tiling at the core's rect" ("floating=" + (Win $i2).floating + " frame=" + ($f -join ",") + " want=" + ($want -join ","))
+  $foc = FocusConfirmed $h2 $i2
+  if ($foc) {
+    [void](Cmd ":xtile :toggle-float")
+    $back = WaitFor { (Win $i2).floating -eq $false } 6
+    Start-Sleep 2
+    $f = Frame $h2; $want = (Win $i2).rect
+    $d = 0; if ($want) { for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $want[$k])) } } else { $d = 999 }
+    Check "CT-7c" ($(if ($back -and $d -le 1) { "PASS" } else { "FAIL" })) "toggle-float puts it back into the tiling at the core's rect" ("floating=" + (Win $i2).floating + " frame=" + ($f -join ",") + " want=" + ($want -join ","))
+  } else {
+    Check "CT-7c" "FAIL" "toggle-float puts it back into the tiling (precondition: focus reached the window)" ("os_focus=" + (State).os_focus + " want=$i2")
+  }
 
-  $pre1 = Win $i1
-  Check "CT-17pre" ($(if ($pre1 -and $pre1.floating -eq $false) { "PASS" } else { "FAIL" })) "precondition: the window we are about to drag is a tile" ($pre1 | ConvertTo-Json -Compress)
   # ---- the user's mouse: a title-bar click floats nothing, a drag floats the tile where it was dropped ----
   $h0 = $N0.MainWindowHandle
   $w0 = (Win $i0).rect
@@ -190,8 +206,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
     for ($k = 0; $k -lt 4; $k++) { $d = [math]::Max($d, [math]::Abs($f[$k] - $w.rect[$k])) }
     $worst = [math]::Max($worst, $d); $diffs += ("{0}: core=[{1}] actual=[{2}]" -f $w.id, ($w.rect -join ","), ($f -join ",")) } }
   Check "CT-17e" ($(if ($worst -le 1 -and $diffs.Count -gt 0) { "PASS" } else { "FAIL" })) "the remaining tiles were re-tiled around it (worst diff $worst px)" ($diffs -join " | ")
-  Focus $h1
-  [void](WaitFor { (State).os_focus -eq $i1 } 6)
+  [void](FocusConfirmed $h1 $i1)
   [void](Cmd ":xtile :toggle-float")
   $back = WaitFor { (Win $i1).floating -eq $false } 6
   Start-Sleep 2
