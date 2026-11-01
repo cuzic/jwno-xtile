@@ -136,6 +136,12 @@ jobs:
         shell: pwsh
         run: ./xtile/spike/probe-os.ps1 -Out spike-out
 
+      - name: Evidence for ADR 0006 (move a window between desktops, switch, hide)
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: ./xtile/spike/probe-workspaces.ps1 -Out spike-out
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
