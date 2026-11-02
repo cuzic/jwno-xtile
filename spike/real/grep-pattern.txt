@@ -1,1 +1,1 @@
-TB-|TASKBAR|delete-tab|add-tab|cocreate|hrinit|error
+^\[|rror|exception|1\. button|DeleteTab|Shot
