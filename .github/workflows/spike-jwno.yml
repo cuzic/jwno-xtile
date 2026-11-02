@@ -163,6 +163,13 @@ jobs:
         shell: pwsh
         run: ./xtile/spike/run-sink.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -RepoRoot "${{ github.workspace }}\xtile" -Config "${{ github.workspace }}\xtile\spike\sink-config.janet" -Out spike-out -ReplPort 9998
 
+      - name: Taskbar spike (ADR 0011 stage 0 - ITaskbarList::DeleteTab through FFI)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        shell: pwsh
+        run: ./xtile/spike/run-taskbar.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -RepoRoot "${{ github.workspace }}\xtile" -Config "${{ github.workspace }}\xtile\spike\taskbar-config.janet" -Out spike-out -ReplPort 9997
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
