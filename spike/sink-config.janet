@@ -113,7 +113,26 @@
   (def n (try (:send-message ui-man (msgs :create) 0 0) ([e] (rec :create-error (string e)) nil)))
   (rec :create-result n))
 
-# the script drives the rest through the REPL: (sink-front) / (sink-destroy)
-(defn sink-front [] (:send-message ui-man (msgs :front) 0 0))
-(defn sink-destroy [] (:send-message ui-man (msgs :destroy) 0 0))
+# The script (run-sink.ps1) drives the rest with flag files next to the log (a REPL call hung in CI):
+# front.flag -> make the sink the foreground window; destroy.flag -> destroy it.
+(def flag-dir (let [i (last (string/find-all "\\" out-path))
+                    j (last (string/find-all "/" out-path))
+                    k (max (or i -1) (or j -1))]
+                (if (>= k 0) (string/slice out-path 0 (+ k 1)) "")))
+(defn flag? [name]
+  (def path (string flag-dir name))
+  (when (os/stat path)
+    (os/rm path)
+    true))
+(ev/spawn
+  (forever
+    (ev/sleep 0.3)
+    (when (flag? "front.flag")
+      (rec :flag :front)
+      (def r (try (:send-message ui-man (msgs :front) 0 0) ([e] (rec :front-error (string e)) nil)))
+      (rec :front-result r))
+    (when (flag? "destroy.flag")
+      (rec :flag :destroy)
+      (def r (try (:send-message ui-man (msgs :destroy) 0 0) ([e] (rec :destroy-error (string e)) nil)))
+      (rec :destroy-result r))))
 (rec :config-end)

@@ -62,8 +62,9 @@ if ($line -and $line -match 'sink-created (\d+)') {
   Check "SK-2" ($(if ($ok -ne [IntPtr]::Zero) { "PASS" } else { "FAIL" })) "the sink answers a message from another process (Jwno has no message pump of the adapter here)" "answered=$($ok -ne [IntPtr]::Zero) in ${ms}ms; IsHungAppWindow=$([S]::IsHungAppWindow($h))"
 
   # SK-3: it can be brought to the front
-  $out = Cmd "(sink-front)"
-  $got = WaitFor { [S]::GetForegroundWindow() -eq $h } 3
+  New-Item -ItemType File -Force -Path (Join-Path $Out "front.flag") | Out-Null
+  $out = "flag"
+  $got = WaitFor { [S]::GetForegroundWindow() -eq $h } 6
   Check "SK-3" ($(if ($got) { "PASS" } else { "FAIL" })) "Jwno's own process can make the sink the foreground window" ("repl=$out; log: " + ((LogLines | Where-Object { $_ -match 'sink-front' }) -join " | "))
   if (-not $got) {
     # what the adapter would have to do: the same AttachThreadInput trick as the harness
@@ -97,13 +98,11 @@ if ($line -and $line -match 'sink-created (\d+)') {
     # SK-7: what Jwno's focus-changed hook says about the sink
     Check "SK-7" "INFO" "what Jwno's :focus-changed reports (hwnd values; the sink is $($Matches[1]))" ((LogLines | Where-Object { $_ -match 'jwno-focus-changed' } | Select-Object -Last 3) -join " | ")
   }
-  $null = Cmd "(sink-destroy)"
-  Start-Sleep -Milliseconds 500
+  New-Item -ItemType File -Force -Path (Join-Path $Out "destroy.flag") | Out-Null
+  [void](WaitFor { -not [S]::IsWindow($h) } 4)
   Check "SK-8" ($(if (-not [S]::IsWindow($h)) { "PASS" } else { "FAIL" })) "the sink can be destroyed again (and so rebuilt)" "alive=$([S]::IsWindow($h))"
 }
 Check "SK-9" "INFO" "NOT measured here: Japanese IME behaviour, Narrator, DPI, the real-hardware lock on SetForegroundWindow from a timer" ""
-$null = Cmd "(:quit)"
-Start-Sleep 1
 if (-not $j.HasExited) { Stop-Process -Id $j.Id -Force -ErrorAction SilentlyContinue }
 $results | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $Out "sink-results.json")
 $fail = @($results | Where-Object { $_.status -eq "FAIL" }).Count
