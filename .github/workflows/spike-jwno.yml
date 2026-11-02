@@ -9,7 +9,7 @@ on:
         description: "Hosted Windows image to run on"
         type: choice
         default: windows-2022
-        options: [windows-2022, windows-2025, windows-latest]
+        options: [windows-2022, windows-2025, windows-latest, windows-11-arm]
 
 env:
   WIN_SDK_VERSION: "10.0.26100.0"
