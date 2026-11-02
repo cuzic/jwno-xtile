@@ -5,7 +5,8 @@
 #   * the virtual desktops created here are closed again, found by an anchor window of the original desktop;
 #   * the mouse pointer is put back.
 # Output: <Out>\progress.log, contract-results.json, safety.json, summary.txt
-param([Parameter(Mandatory)][string]$Jwno, [Parameter(Mandatory)][string]$RepoRoot, [string]$Out = "C:\Users\cuzic\xtile-realtest\out")
+param([Parameter(Mandatory)][string]$Jwno, [Parameter(Mandatory)][string]$RepoRoot, [string]$Out = "C:\Users\cuzic\xtile-realtest\out",
+      [ValidateSet("contract", "taskbar")][string]$Spike = "contract")
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Get-ChildItem $Out -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
@@ -88,7 +89,13 @@ try {
   $env:CONTRACT_OUT = Join-Path $Out "contract.log"
   $pw = "C:\Program Files\PowerShell\7\pwsh.exe"
   $cfg = Join-Path $RepoRoot "spike\contract-config.janet"
+  if ($Spike -eq "taskbar") {
+    # ADR 0011 stage 0: DeleteTab on a window this script makes itself (never one of the user's)
+    $env:TB_OUT = Join-Path $Out "taskbar.log"
+    & $pw -NoProfile -File (Join-Path $RepoRoot "spike\run-taskbar.ps1") -Jwno $Jwno -RepoRoot $RepoRoot -Config (Join-Path $RepoRoot "spike\taskbar-config.janet") -Out $Out -ReplPort 19997 *>&1 | Add-Content -Path (Join-Path $Out "contract-console.log") -Encoding utf8
+  } else {
   & $pw -NoProfile -File (Join-Path $RepoRoot "spike\run-contract.ps1") -Jwno $Jwno -RepoRoot $RepoRoot -Config $cfg -Out $Out -ReplPort 19999 *>&1 | Add-Content -Path (Join-Path $Out "contract-console.log") -Encoding utf8
+  }
   $exit = $LASTEXITCODE
   P "contract script finished, exit=$exit"
 } catch {

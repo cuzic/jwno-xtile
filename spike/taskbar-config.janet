@@ -51,7 +51,7 @@
   (try
     (do
       (unless tbl (init-taskbar))
-      (def h (FindWindowEx nil nil "Notepad" nil))
+      (def h (FindWindowEx nil nil nil "XTILE-TB-SPIKE"))
       (if (null? h)
         (rec :no-window label)
         (let [hr (ffi-call (slot i) (ffi-sig :default :int :ptr :ptr) tbl h)]
@@ -63,7 +63,7 @@
 (def cmd (in jwno/context :command-manager))
 (:add-command cmd :tb-delete (fn [] (tb-call 5 :delete-tab)))
 (:add-command cmd :tb-add (fn [] (tb-call 4 :add-tab)))
-(:add-command cmd :tb-find (fn [] (rec :find (let [h (FindWindowEx nil nil "Notepad" nil)] (if (null? h) :none (util/pointer-to-number h))))))
+(:add-command cmd :tb-find (fn [] (rec :find (let [h (FindWindowEx nil nil nil "XTILE-TB-SPIKE")] (if (null? h) :none (util/pointer-to-number h))))))
 (:define-key keymap "Alt+Shift+F7" :tb-delete)
 (:define-key keymap "Alt+Shift+F6" :tb-add)
 (:define-key keymap "Alt+Shift+F5" :tb-find)

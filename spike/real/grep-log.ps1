@@ -3,7 +3,7 @@ param([string]$Work = "C:\Users\cuzic\xtile-realtest")
 $o = Join-Path $Work "out"
 $pat = (Get-Content (Join-Path $Work "repo\spike\real\grep-pattern.txt") -Raw).Trim()
 "pattern: $pat"
-foreach ($f in "contract-jwno.log", "contract.log") {
+foreach ($f in "taskbar.log", "contract-console.log", "contract-jwno.log", "contract.log") {
   $p = Join-Path $o $f
   "===== $f"
   if (Test-Path $p) {

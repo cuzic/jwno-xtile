@@ -1,1 +1,1 @@
-wm-desktop-name-changed|suppressed|virtual-desktop-changed|Virtual desktop name
+TB-|TASKBAR|delete-tab|add-tab|cocreate|hrinit|error

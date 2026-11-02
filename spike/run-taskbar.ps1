@@ -44,13 +44,16 @@ function TaskbarButtons($needle) {
   ,@($all | Where-Object { $_.Current.Name -like "*$needle*" } | ForEach-Object { $_.Current.Name })
 }
 
-$np = Start-Process notepad -PassThru
-[void](WaitFor { [T]::FindWindow("Notepad", $null) -ne [IntPtr]::Zero } 12)
-Start-Sleep 2
-$nph = [T]::FindWindow("Notepad", $null)
+# our OWN test window (a WinForms form with a unique title, in its own process): never a window of the user's
+$pwsh = (Get-Process -Id $PID).Path
+$np = Start-Process -FilePath $pwsh -WindowStyle Minimized -PassThru -ArgumentList @("-NoProfile", "-STA", "-Command",
+  "Add-Type -AssemblyName System.Windows.Forms; `$f = New-Object System.Windows.Forms.Form; `$f.Text = 'XTILE-TB-SPIKE'; `$f.Width = 300; `$f.Height = 120; `$f.ShowInTaskbar = `$true; [System.Windows.Forms.Application]::Run(`$f)")
+[void](WaitFor { [T]::FindWindow($null, "XTILE-TB-SPIKE") -ne [IntPtr]::Zero } 15)
+Start-Sleep 1
+$nph = [T]::FindWindow($null, "XTILE-TB-SPIKE")
 $tray = [T]::FindWindow("Shell_TrayWnd", $null)
-Check "TB-0" "INFO" "a taskbar exists in this session; the test window (Notepad) exists" ("Shell_TrayWnd=$($tray -ne [IntPtr]::Zero) notepad=$($nph -ne [IntPtr]::Zero)")
-$before = TaskbarButtons "Notepad"
+Check "TB-0" "INFO" "a taskbar exists in this session; the test window (XTILE-TB-SPIKE) exists" ("Shell_TrayWnd=$($tray -ne [IntPtr]::Zero) testwindow=$($nph -ne [IntPtr]::Zero)")
+$before = TaskbarButtons "spike"
 Check "TB-1" "INFO" "taskbar buttons that mention Notepad before anything" ($(if ($null -eq $before) { "no taskbar" } else { "$($before.Count): " + ($before -join " | ") }))
 
 $jargs = @("--mod-path", $RepoRoot, "--config", $Config, "--log-file", (Join-Path $Out "taskbar-jwno.log"),
@@ -63,21 +66,21 @@ if ($up) {
   $called = WaitFor { (LogLines | Where-Object { $_ -match 'delete-tab|error|cocreate' }).Count -gt 1 } 6
   Check "TB-3" "INFO" "DeleteTab was called (HRESULTs: 0 = S_OK)" ((LogLines | Where-Object { $_ -match 'cocreate|hrinit|delete-tab|error|no-window' }) -join " | ")
   Start-Sleep 2
-  $after = TaskbarButtons "Notepad"
+  $after = TaskbarButtons "spike"
   Check "TB-4" "INFO" "taskbar buttons that mention Notepad after DeleteTab" ($(if ($null -eq $after) { "no taskbar" } else { "$($after.Count): " + ($after -join " | ") }))
   # does it stay removed? activate, retitle, flash
   [void][T]::SetForegroundWindow($nph); Start-Sleep 2
-  $a1 = TaskbarButtons "Notepad"
+  $a1 = TaskbarButtons "spike"
   Check "TB-5a" "INFO" "after the window was activated" ($(if ($null -eq $a1) { "no taskbar" } else { "$($a1.Count)" }))
-  [void][T]::SendMessage($nph, 0x000C, [IntPtr]::Zero, "Renamed by the spike - Notepad"); Start-Sleep 2
-  $a2 = TaskbarButtons "Notepad"
+  [void][T]::SendMessage($nph, 0x000C, [IntPtr]::Zero, "Renamed by the spike"); Start-Sleep 2
+  $a2 = TaskbarButtons "spike"
   Check "TB-5b" "INFO" "after its title changed" ($(if ($null -eq $a2) { "no taskbar" } else { "$($a2.Count): " + ($a2 -join " | ") }))
   [void][T]::FlashWindow($nph, $true); Start-Sleep 2
-  $a3 = TaskbarButtons "Notepad"
+  $a3 = TaskbarButtons "spike"
   Check "TB-5c" "INFO" "after FlashWindow" ($(if ($null -eq $a3) { "no taskbar" } else { "$($a3.Count)" }))
   AltShift 0x75                                         # Alt+Shift+F6: AddTab
   Start-Sleep 2
-  $back = TaskbarButtons "Notepad"
+  $back = TaskbarButtons "spike"
   Check "TB-6" "INFO" "after AddTab" ($(if ($null -eq $back) { "no taskbar" } else { "$($back.Count)" }))
 }
 Stop-Process -Id $np.Id -Force -ErrorAction SilentlyContinue
