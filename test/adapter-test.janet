@@ -916,3 +916,14 @@
       (when (= op 8) (rt/dispatch (a :rt) [:command :refresh]))
       (drain! w)
       (check-p1 w a (string/format "seed %d step %d ops %q" seed step log)))))
+
+(deftest "Opus M1: adopt-existing! leaves maximised windows and windows of another monitor alone"
+  (def w (fake-world))
+  (array/push (w :top) 6 7 8)
+  (put (w :rects) 6 {:left 0 :top 0 :right 1000 :bottom 600})          # maximised
+  (put (w :zoomed) 6 true)
+  (put (w :rects) 7 {:left 2000 :top 100 :right 2300 :bottom 400})     # on a second monitor (work area is 0,0,1000,600)
+  (put (w :rects) 8 {:left 100 :top 100 :right 400 :bottom 400})       # an ordinary window of the primary monitor
+  (def a (install-adapter w))
+  ((a :start))
+  (is= @[8] (map |($ 1) (calls-of w :window-opened))))

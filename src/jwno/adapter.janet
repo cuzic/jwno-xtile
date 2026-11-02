@@ -515,11 +515,23 @@
     (real run 3: a window that existed before Jwno started was never managed). Offer every other
     top-level window of this desktop to Jwno's own path (its filters and hooks decide)."
     []
+    (def wa (work-area))
+    (def pf (get win32 :window-rect))
     (each hwnd (top-level-hwnds)
       (def [ok err]
         (protect
           (when (and (not (:find-hwnd (in wm :root) hwnd)) (on-current-desktop? hwnd))
-            (:window-opened wm hwnd))))
+            (cond
+              # Opus M1 (a): Jwno's transform would un-maximise it before the core could classify it
+              # (a maximised window is a float for the core): leave maximised windows alone
+              (w :zoomed? hwnd)
+              (log-fn :debug "adopt-existing: leaving a maximised window alone")
+              # Opus M1 (e): the core has one monitor; a window whose centre is elsewhere is not ours
+              (let [r (and pf (pf hwnd))]
+                (and r (let [cx (div (+ (r :left) (r :right)) 2) cy (div (+ (r :top) (r :bottom)) 2)]
+                         (or (< cx (wa :x)) (>= cx (+ (wa :x) (wa :w))) (< cy (wa :y)) (>= cy (+ (wa :y) (wa :h)))))))
+              (log-fn :debug "adopt-existing: leaving a window of another monitor alone")
+              (:window-opened wm hwnd)))))
       (unless ok (log-fn :debug (string "adopt-existing: " err)))))
 
   (defn recover-strays
