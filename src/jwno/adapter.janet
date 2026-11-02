@@ -111,7 +111,25 @@
 
   # ---- parking: a window of another workspace is moved off-screen and remembered ----------
   (def parked @{})   # id -> {:rect where it was :at where we put it ...}; OS-boundary memory, not WM state
+  (defn protect-val [f] (let [r (protect (f))] (when (r 0) (r 1))))
   (def gave-up @{})  # ids we stopped parking after `repark-limit` tries; cleared by a place/show or the window's end
+
+  # ADR 0011 stage 0: ITaskbarList::DeleteTab makes IVirtualDesktopManager::GetWindowDesktopId fail for the window.
+  # Jwno then thinks it moved to another desktop and purges it from its tree (found by the contract test; only when
+  # more than one virtual desktop exists). A parked window keeps the desktop it had when we parked it.
+  (when (and hide-tab? (in vd-man :call-method))
+    (def orig-call (in vd-man :call-method))
+    (put vd-man :call-method
+         (fn [self method args & more]
+           (def res (orig-call self method args ;more))
+           (if (and (= method :GetWindowDesktopId)
+                    (or (not (res 0)) (= (res 1) "{00000000-0000-0000-0000-000000000000}")))
+             (let [h (first args)
+                   root (protect-val (fn [] (w :root-of h)))
+                   n (and root (protect-val (fn [] (w :hwnd->number root))))
+                   p (and n (get parked n))]
+               (if (and p (p :vd)) [true (p :vd)] res))
+             res))))
 
   (defn tab-delete [hwnd]
     "ADR 0011 stage 0: take the taskbar button of a parked window away (best effort)."
@@ -163,7 +181,12 @@
       (let [after (protect (visible-rect win))]
         (when (and (after 0) (> ((after 1) :x) (+ park-x 2000)))
           (log-fn :warn (string/format "hide: window %q is still on screen at %q after the park" id (after 1)))))
-      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed :reparks (if prev (get prev :reparks 0) 0)})
+      (def vd (or (and prev (prev :vd))
+                  # the window's virtual desktop, read BEFORE DeleteTab: afterwards Windows no longer knows it
+                  (when (and hide-tab? (get win32 :desktop-guid))
+                    (protect-val (fn [] ((get win32 :desktop-guid) hwnd))))))
+      (def entry {:rect rect :at at :hwnd hwnd :zoomed zoomed :reparks (if prev (get prev :reparks 0) 0)})
+      (put parked id (if vd (struct ;(kvs entry) :vd vd) entry))
       (tab-delete hwnd)))))
 
   (defn unpark

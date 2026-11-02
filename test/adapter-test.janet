@@ -22,6 +22,7 @@
            :desktops @[]         # [index guid name]
            :refreshes 0
            :last-vd nil
+           :vd-fail @{}          # ptr -> true: GetWindowDesktopId fails (a window without a taskbar button)
            :hooks @{}})
   (defn rec [& c] (array/push (w :calls) c))
 
@@ -66,7 +67,8 @@
   (def hook-man
     @{:add-hook (fn [self name f] (put (w :hooks) name f))})
   (def vd-man
-    @{:get-all-desktops (fn [self &opt refresh]
+    @{:call-method (fn [self method args & more] (if (get (w :vd-fail) ((first args) :ptr)) [false :err] [true (get (w :guids) ((first args) :ptr))]))
+      :get-all-desktops (fn [self &opt refresh]
                           (when refresh (++ (w :refreshes)))
                           (w :desktops))})
   (def keymap @{:define-key (fn [self k cmd] (rec :define-key k cmd))})
@@ -1093,3 +1095,28 @@
   (put (w :minimized) 4 true)
   ((get (a :ctx) :hide) 4)
   (is= 0 (length (calls-of w :tab-delete))))
+
+(deftest "ADR 0011 stage 0: a parked window without a taskbar button keeps its virtual desktop for Jwno (or Jwno purges it)"
+  (def w (fake-world))
+  (def a (install-adapter w {:hide-taskbar-button true}))
+  (def vd (get-in w [:context :virtual-desktop-manager]))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  (def ask (fn [n] (:call-method vd :GetWindowDesktopId [(hw n)])))
+  ((get (a :ctx) :hide) 4)                                           # parked: DeleteTab follows, and Windows then fails to say where it is
+  (put (w :vd-fail) 4 true) (put (w :vd-fail) 5 true)
+  (is= [true g1] (ask 4))                                            # we answer for the parked window
+  (is= [false :err] (ask 5))                                         # not parked: the failure is Jwno's to see
+  # a window that is shown again is Windows' own business again
+  ((get (a :ctx) :show) 4)
+  (is= [false :err] (ask 4)))
+
+(deftest "ADR 0011 stage 0: the wrapper is only installed when the option is on"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (def vd (get-in w [:context :virtual-desktop-manager]))
+  (managed-window w a 4)
+  ((get (a :ctx) :hide) 4)
+  (put (w :vd-fail) 4 true)
+  (is= [false :err] (:call-method vd :GetWindowDesktopId [(hw 4)])))
