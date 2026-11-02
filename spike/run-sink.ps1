@@ -22,6 +22,8 @@ public static class S {
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int i, int v);
+  [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int hh, uint f);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RC r);
@@ -91,6 +93,16 @@ if ($line -and $line -match 'sink-created (\d+)') {
     Check "SK-3e" "INFO" "fronted after ShowWindow(SW_SHOW)" ([S]::Front($h))
     [void][S]::SetWindowPos($h, [IntPtr]::Zero, -32000, -32000, 1, 1, 0x0014)
     Check "SK-3f" "INFO" "fronted when moved back to -32000,-32000 (1x1)" ([S]::Front($h))
+    Check "SK-3h" "INFO" "the sink is enabled" ([S]::IsWindowEnabled($h))
+    [void][S]::SetWindowLong($h, -20, ([S]::GetWindowLong($h, -20) -band (-bnot 0x80)) -bor 0x40000)   # drop TOOLWINDOW, add APPWINDOW
+    Check "SK-3g" "INFO" "fronted when it is a normal app window (no TOOLWINDOW, APPWINDOW)" ([S]::Front($h))
+    # control: is a plain 1x1 popup made by THIS process any easier to front?
+    Add-Type -AssemblyName System.Windows.Forms
+    $f = New-Object System.Windows.Forms.Form
+    $f.FormBorderStyle = "None"; $f.ShowInTaskbar = $false; $f.StartPosition = "Manual"; $f.Location = New-Object System.Drawing.Point(-32000, -32000); $f.Size = New-Object System.Drawing.Size(1, 1)
+    $f.Show(); [System.Windows.Forms.Application]::DoEvents()
+    Check "SK-10" "INFO" "control: a 1x1 popup created by the harness (WinForms) at -32000,-32000 can be fronted" ([S]::Front($f.Handle))
+    $f.Close()
     # what the adapter would have to do: the same AttachThreadInput trick as the harness
     [uint32]$p0 = 0
     $t1 = [S]::GetWindowThreadProcessId([S]::GetForegroundWindow(), [ref]$p0); $t2 = [S]::GetCurrentThreadId()
