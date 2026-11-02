@@ -24,8 +24,8 @@ public static class W {
 }
 "@
 [void][W]::SetProcessDPIAware()      # physical pixels: the picture of the taskbar must not be cut off at 125-200 % scaling
-$tb = [ITaskbarList](New-Object TaskbarListClass)
-Write-Host ("HrInit = " + $tb.HrInit())
+$tb = [ITaskbarList][Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]"56FDF344-FD6D-11d0-958A-006097C9A090"))
+try { Write-Host ("HrInit = " + $tb.HrInit()) } catch { Write-Host ("HrInit threw " + $_.Exception.GetType().Name + " 0x" + ("{0:X8}" -f $_.Exception.HResult)) }
 $f = New-Object System.Windows.Forms.Form
 $f.Text = "XTILE-TB-SPIKE"; $f.Width = 320; $f.Height = 110; $f.StartPosition = "CenterScreen"; $f.ShowInTaskbar = $true
 $label = New-Object System.Windows.Forms.Label; $label.Dock = "Fill"; $label.TextAlign = "MiddleCenter"; $label.Text = "watch the taskbar"; $f.Controls.Add($label)
@@ -49,7 +49,7 @@ function Shot($name) {
 function Step($sec, $text, [scriptblock]$act) {
   while (((Get-Date) - $t0).TotalSeconds -lt $sec) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
   $label.Text = $text
-  $r = & $act
+  $r = try { & $act } catch { "THREW " + $_.Exception.GetType().Name + " 0x" + ("{0:X8}" -f $_.Exception.HResult) }
   $until = (Get-Date).AddMilliseconds(1500)
   while ((Get-Date) -lt $until) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }   # let the shell react
   Shot ($text.Substring(0, 1) + "-" + ($text -replace '[^A-Za-z]', '').Substring(0, [Math]::Min(12, ($text -replace '[^A-Za-z]', '').Length)))
