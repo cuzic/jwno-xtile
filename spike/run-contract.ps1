@@ -379,6 +379,8 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Start-Sleep 3
   $tdel = @(LogLines | Where-Object { $_ -match 'taskbar-delete hwnd=.* -> 0' })
   $tfail = @(LogLines | Where-Object { $_ -match 'taskbar-delete hwnd=.* -> (nil|-)' })
+  $vis = (@($i0, $i1, $i2) | ForEach-Object { "id=$_ visible=" + [C]::IsWindowVisible([IntPtr]::new([int64]$_)) + " iconic=" + [C]::IsIconic([IntPtr]::new([int64]$_)) }) -join " | "
+  Check "CT-24v" "INFO" "state of the parked windows with :hide-taskbar-button (Jwno purges a window that is not visible)" ($vis + " | purges in the Jwno log: " + @(Get-Content (Join-Path $Out "contract-jwno.log") -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Purged [1-9]' }).Count)
   Check "CT-24a" ($(if ($tdel.Count -gt 0) { "PASS" } else { "FAIL" })) "a parked window's taskbar button is taken away through ITaskbarList (DeleteTab returned S_OK)" ("ok=" + $tdel.Count + " failed=" + $tfail.Count)
   [void](Cmd ":xtile :goto 1")
   [void](WaitFor { -not (Parked $i0) } 8)
