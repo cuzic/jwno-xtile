@@ -77,9 +77,19 @@ function TaskbarButtons($needle) {
 
 # our OWN test window (a WinForms form with a unique title, in its own process): never a window of the user's
 $pwsh = (Get-Process -Id $PID).Path
-# Hidden: no console window of its own (a console would keep a button in the same taskbar group and hide the effect)
-$np = Start-Process -FilePath $pwsh -WindowStyle Hidden -PassThru -ArgumentList @("-NoProfile", "-STA", "-Command",
-  "Add-Type -AssemblyName System.Windows.Forms; `$f = New-Object System.Windows.Forms.Form; `$f.Text = 'XTILE-TB-SPIKE'; `$f.Width = 300; `$f.Height = 120; `$f.ShowInTaskbar = `$true; [System.Windows.Forms.Application]::Run(`$f)")
+# The host process has no console of its own (a console would keep a button in the same taskbar group and hide the effect).
+# A process started Hidden gets its FIRST window hidden too, so the form is shown explicitly once it exists.
+$hostScript = Join-Path $Out "formhost.ps1"
+@'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class H { [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c); }'
+$f = New-Object System.Windows.Forms.Form
+$f.Text = 'XTILE-TB-SPIKE'; $f.Width = 300; $f.Height = 120; $f.ShowInTaskbar = $true
+$f.Add_Shown({ [void][H]::ShowWindow($f.Handle, 5); $f.Activate() })
+[System.Windows.Forms.Application]::Run($f)
+'@ | Set-Content -Path $hostScript -Encoding utf8
+$pwsh = (Get-Process -Id $PID).Path
+$np = Start-Process -FilePath $pwsh -WindowStyle Hidden -PassThru -ArgumentList @("-NoProfile", "-STA", "-File", $hostScript)
 [void](WaitFor { [T]::ByTitle("XTILE-TB-SPIKE") -ne [IntPtr]::Zero } 20)
 Start-Sleep 1
 $nph = [T]::ByTitle("XTILE-TB-SPIKE")
