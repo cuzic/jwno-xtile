@@ -20,6 +20,8 @@ public static class T {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l);
   [DllImport("user32.dll")] public static extern bool FlashWindow(IntPtr h, bool inv);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
   delegate bool EnumProc(IntPtr h, IntPtr l);
@@ -96,6 +98,7 @@ $nph = [T]::ByTitle("XTILE-TB-SPIKE")
 $tray = [T]::FindWindow("Shell_TrayWnd", $null)
 Check "TB-0" "INFO" "a taskbar exists in this session; the test window (XTILE-TB-SPIKE) exists" ("Shell_TrayWnd=$($tray -ne [IntPtr]::Zero) testwindow=$($nph -ne [IntPtr]::Zero)")
 Start-Sleep 2; Shot "1-before"
+Check "TB-1v" "INFO" "visibility of the test window BEFORE DeleteTab" ("IsWindowVisible=$([T]::IsWindowVisible($nph)) IsIconic=$([T]::IsIconic($nph))")
 $before = TaskbarButtons "spike"
 Check "TB-1" "INFO" "taskbar buttons that mention Notepad before anything" ($(if ($null -eq $before) { "no taskbar" } else { "$($before.Count): " + ($before -join " | ") }))
 
@@ -109,6 +112,7 @@ if ($up) {
   $called = WaitFor { (LogLines | Where-Object { $_ -match 'delete-tab|error|cocreate' }).Count -gt 1 } 6
   Check "TB-3" "INFO" "DeleteTab was called (HRESULTs: 0 = S_OK)" ((LogLines | Where-Object { $_ -match 'cocreate|hrinit|delete-tab|error|no-window' }) -join " | ")
   Start-Sleep 2; Shot "2-after-DeleteTab"
+  Check "TB-4v" "INFO" "visibility of the test window AFTER DeleteTab (Jwno purges windows that are not visible)" ("IsWindowVisible=$([T]::IsWindowVisible($nph)) IsIconic=$([T]::IsIconic($nph))")
   $after = TaskbarButtons "spike"
   Check "TB-4" "INFO" "taskbar buttons that mention Notepad after DeleteTab" ($(if ($null -eq $after) { "no taskbar" } else { "$($after.Count): " + ($after -join " | ") }))
   # does it stay removed? activate, retitle, flash
