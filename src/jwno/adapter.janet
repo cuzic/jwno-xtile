@@ -265,6 +265,7 @@
       (if ok
         (when entry (array/push out entry))
         (log-fn :warn (string "enumerate: skipped a window (step " step ", hwnd " (in win :hwnd) "): " entry))))
+    (log-fn :debug (string/format "enumerate: %d in Jwno's tree, %d reported (parked: %d)" (length (:get-window-stack (in wm :root))) (length out) (length parked)))
     # replace, do not accumulate: windows whose :window-removed never came must not pile up
     (table/clear num->hwnd)
     (eachp [k v] fresh (put num->hwnd k v))
