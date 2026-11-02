@@ -29,6 +29,13 @@
             "GetWindowLongPtr" "GetWindowLongPtrW" "GetWindowLongW" "GetWindowLongA" "SetWindowLongPtr"]
   (rec :jw32-has name (not (nil? (get (curenv) (symbol name))))))
 
+# Is Janet's FFI in this jwno.exe? (ADR 0011 stage 0: ITaskbarList::DeleteTab has no jw32 binding)
+(rec :ffi-has (not (nil? (get root-env (symbol "ffi/native")))) (not (nil? (get root-env (symbol "ffi/call")))))
+(when (get root-env (symbol "ffi/native"))
+  (try (let [lib ((get-in root-env [(symbol "ffi/native") :value]) "user32.dll")]
+         (rec :ffi-user32 (type lib)))
+    ([e] (rec :ffi-user32-error (string e)))))
+
 (def adapter-env (try-require "src/jwno/adapter"))
 (def w32-env (try-require "src/jwno/win32"))
 (def runtime-env (try-require "src/shell/runtime"))
