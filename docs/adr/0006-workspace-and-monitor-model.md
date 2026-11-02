@@ -1,6 +1,6 @@
 # 0006. ワークスペースの実装方式とモニタモデル
 
-- 状態: Accepted（改訂 3: 案 2 に決定。Opus レビュー 1 回の High 3・Med 5 を反映。Core の hide/show・アダプタの park・回復を実装し、ホスト型 Windows（Server 2022 と Server 2025）の契約テスト 45 項目で検証済み。実機（Windows 11、空の専用デスクトップのみ）で基本の動作を確認。Opus の実装後の再確認（2026-11-01、High 3・Med 8）の指摘に対応中）
+- 状態: Accepted（改訂 3: 案 2 に決定。改訂 4（D-6・D-7、2026-11-01〜02）は実装済み・実機未検証。Opus レビュー 1 回の High 3・Med 5 を反映。Core の hide/show・アダプタの park・回復を実装し、ホスト型 Windows（Server 2022 と Server 2025）の契約テスト 45 項目で検証済み。実機（Windows 11、空の専用デスクトップのみ）で基本の動作を確認。Opus の実装後の再確認（2026-11-01、High 3・Med 8）の指摘に対応中）
 - 日付: 2026-10-31
 
 ## Context
@@ -230,3 +230,11 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 - スパイクで、Jwno のキーボードフックが低レベルフック（`WH_KEYBOARD_LL`）かを確かめる（sink が前面でも束縛が効く前提）。
 - 状態: 改訂 4（D-6 の補足、D-7、4c〜4e）は**設計としては収束**。sink 窓に関する前提（前面化・打鍵の破棄・応答・IME・束縛）は実装前のスパイクの結果次第で、すべて unverified on Windows。
   Core 側（`stray-focus`、`:reclaim-focus`、`:stray-own`、`:reclaim-tries`）はスパイクに依存しないので先に実装できる。
+
+### 実装の状況（2026-11-02）
+- Core（`stray-focus`、`:reclaim-focus`、`:stray-own`、`:reclaim-tries`、`:show` の拡張、`goto` が `:os-focus` を保つ）、ランタイム（`:focus-none` の実行、`:reclaim-focus` の予約）、アダプタ（`:show` の画面外回復、
+  `window-removed` と `parked`、印付き `:focus` の画面外確認、最小化中の窓の「後で park」、最大化の記憶）を実装した。プロパティテスト（F12a〜d、アダプタ側 P-1）で検査している。
+- **sink 窓**: ホスト型 Windows Server 2022 のスパイクで、UI スレッド上で作れる・別プロセスのメッセージに答える・打鍵と Alt+F4 を捨てる・前面でも Jwno の束縛が効く、を確認した。
+  前面化は、`SetForegroundWindow` を UI スレッドから呼ぶだけでは拒否され、**直前の Alt の打鍵（`SendInput`）のあと**に通った。UIA の `SetFocus` では前面にならなかった。実装は `win32.janet` の `make-focus-sink`。
+  実機（Windows 11）、IME、Narrator は**未検証**。拒否されたときは「成功扱い＋ログ」で、`:reclaim-focus` の再試行（3 回）に任せる。
+- 未対応: 再 park の上限（Opus M3）、`hide` の結果の読み返し（M6）、`[:window-surfaced id]`、全画面の窓（M5）、最小化から戻したときの割り当て（M4）。
