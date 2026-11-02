@@ -17,6 +17,14 @@ public static class T {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l);
   [DllImport("user32.dll")] public static extern bool FlashWindow(IntPtr h, bool inv);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  public static IntPtr ByTitle(string needle) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((h, _) => { var sb = new System.Text.StringBuilder(256); GetWindowText(h, sb, 256);
+      if (sb.ToString().IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0) { found = h; return false; } return true; }, IntPtr.Zero);
+    return found; }
 }
 "@
 $results = New-Object System.Collections.ArrayList
@@ -37,20 +45,25 @@ function AltShift([byte]$vk) {
 }
 # taskbar buttons whose name contains $needle (UI Automation over Shell_TrayWnd, all descendants)
 function TaskbarButtons($needle) {
-  $h = [T]::FindWindow("Shell_TrayWnd", $null)
-  if ($h -eq [IntPtr]::Zero) { return $null }
-  $root = [System.Windows.Automation.AutomationElement]::FromHandle($h)
-  $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-  ,@($all | Where-Object { $_.Current.Name -like "*$needle*" } | ForEach-Object { $_.Current.Name })
+  # the taskbar lives under the desktop root in UI Automation (Windows 11: XAML islands under Shell_TrayWnd);
+  # only elements whose window is the taskbar are counted: parent chain contains "Shell_TrayWnd" or "Taskbar"
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $tray = $root.FindFirst([System.Windows.Automation.TreeScope]::Children,
+            (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty, "Shell_TrayWnd")))
+  if ($null -eq $tray) { return $null }
+  $all = $tray.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+  $names = @($all | ForEach-Object { $_.Current.Name } | Where-Object { $_ -like "*$needle*" })
+  Write-Host ("  (taskbar elements seen: {0}; matching '{1}': {2})" -f $all.Count, $needle, $names.Count)
+  ,$names
 }
 
 # our OWN test window (a WinForms form with a unique title, in its own process): never a window of the user's
 $pwsh = (Get-Process -Id $PID).Path
 $np = Start-Process -FilePath $pwsh -WindowStyle Minimized -PassThru -ArgumentList @("-NoProfile", "-STA", "-Command",
   "Add-Type -AssemblyName System.Windows.Forms; `$f = New-Object System.Windows.Forms.Form; `$f.Text = 'XTILE-TB-SPIKE'; `$f.Width = 300; `$f.Height = 120; `$f.ShowInTaskbar = `$true; [System.Windows.Forms.Application]::Run(`$f)")
-[void](WaitFor { [T]::FindWindow($null, "XTILE-TB-SPIKE") -ne [IntPtr]::Zero } 15)
+[void](WaitFor { [T]::ByTitle("XTILE-TB-SPIKE") -ne [IntPtr]::Zero } 20)
 Start-Sleep 1
-$nph = [T]::FindWindow($null, "XTILE-TB-SPIKE")
+$nph = [T]::ByTitle("XTILE-TB-SPIKE")
 $tray = [T]::FindWindow("Shell_TrayWnd", $null)
 Check "TB-0" "INFO" "a taskbar exists in this session; the test window (XTILE-TB-SPIKE) exists" ("Shell_TrayWnd=$($tray -ne [IntPtr]::Zero) testwindow=$($nph -ne [IntPtr]::Zero)")
 $before = TaskbarButtons "spike"
