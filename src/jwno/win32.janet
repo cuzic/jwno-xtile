@@ -10,6 +10,7 @@
 (use jw32/_combaseapi)
 (use jw32/_shobjidl_core)
 (use jw32/_util)
+(use jw32/_libloaderapi)
 (import jwno/util)
 
 (def- ws-caption 0x00C00000)
@@ -172,6 +173,86 @@
              # jw32 returns a NULL pointer, not nil, for "no owner" (Jwno itself tests `null?`)
              (not (or (nil? owner) (null? owner))))})
 
+# ---- the sink window (ADR 0006 D-7b, rev. 4d): holds the OS focus when the visible workspace is empty ----
+# It lives on Jwno's UI thread (the only thread there that pumps messages), so the window procedure and the
+# three handlers below are marshalled over there: they may use jw32 and constants only, no closures over
+# anything else. Spike: spike/sink-config.janet + spike/run-sink.ps1 (hosted Windows Server 2022: window
+# created, answers messages, swallows keys and Alt+F4, Jwno's own key bindings still work in front of it,
+# and `SetForegroundWindow` works from the UI thread after a synthetic Alt tap; UIA SetFocus does not).
+# UNVERIFIED on a real desktop: IME, Narrator, the foreground lock without a preceding Alt tap.
+
+(defn- sink-wndproc [hwnd msg wparam lparam]
+  (cond
+    (or (= msg WM_KEYDOWN) (= msg WM_KEYUP) (= msg WM_CHAR)
+        (= msg WM_SYSKEYDOWN) (= msg WM_SYSKEYUP) (= msg WM_SYSCHAR))
+    0                                                          # keys typed into the sink go nowhere
+    (= msg WM_CLOSE) 0                                         # nor can it be closed
+    (= msg WM_SYSCOMMAND)
+    (if (= (band (int/to-number wparam) 0xFFF0) 0xF060)        # SC_CLOSE (Alt+F4)
+      0
+      (DefWindowProc hwnd msg wparam lparam))
+    (DefWindowProc hwnd msg wparam lparam)))
+
+(defn- sink-create [_hwnd _msg _wparam _lparam _hook state]
+  (if-let [old (in state :xtile-sink)]
+    (util/pointer-to-number old)
+    (do
+      # a second RegisterClassEx (after a destroy) fails because the class exists: that is fine
+      (RegisterClassEx (WNDCLASSEX :lpfnWndProc sink-wndproc
+                                   :hInstance (GetModuleHandle nil)
+                                   :lpszClassName "xtile-sink"
+                                   :hCursor (LoadCursor nil IDC_ARROW)))
+      (def h (CreateWindowEx WS_EX_TOOLWINDOW "xtile-sink" "xtile: 空のワークスペース"
+                             WS_POPUP -32000 -32000 1 1 nil nil (GetModuleHandle nil) nil))
+      (if (null? h)
+        0
+        (do (put state :xtile-sink h)
+            (ShowWindow h SW_SHOWNOACTIVATE)
+            (util/pointer-to-number h))))))
+
+(defn- sink-front [_hwnd _msg _wparam _lparam _hook state]
+  (def h (in state :xtile-sink))
+  (defn fg? [] (= (util/pointer-to-number (GetForegroundWindow)) (util/pointer-to-number h)))
+  (defn alt-tap []
+    (SendInput [(INPUT :type INPUT_KEYBOARD :ki.wVk 0x12 :ki.dwFlags 0)
+                (INPUT :type INPUT_KEYBOARD :ki.wVk 0x12 :ki.dwFlags KEYEVENTF_KEYUP)]))
+  (if (nil? h)
+    0
+    (do
+      (var ok false)
+      (SetForegroundWindow h)
+      (set ok (fg?))
+      (unless ok (alt-tap) (SetForegroundWindow h) (set ok (fg?)))      # the variant that worked in the spike
+      (unless ok (ShowWindow h SW_MINIMIZE) (ShowWindow h SW_RESTORE) (SetForegroundWindow h) (set ok (fg?)))
+      (if ok 1 0))))
+
+(defn- sink-destroy [_hwnd _msg _wparam _lparam _hook state]
+  (when-let [h (in state :xtile-sink)]
+    (DestroyWindow h)
+    (put state :xtile-sink nil))
+  0)
+
+(defn make-focus-sink
+  "-> {:front () -> bool, :hwnd-number () -> number|nil, :destroy ()}. The window is made on first use and
+  made again if it was destroyed. A refusal (foreground lock) is `false`, not an error."
+  [ui-man]
+  (def ids @{})
+  (var hwnd-n nil)
+  (defn ensure []
+    (unless (ids :create)
+      (put ids :create (:add-custom-message ui-man sink-create))
+      (put ids :front (:add-custom-message ui-man sink-front))
+      (put ids :destroy (:add-custom-message ui-man sink-destroy))))
+  @{:front (fn []
+             (ensure)
+             (def n (num (:send-message ui-man (ids :create) 0 0)))
+             (set hwnd-n (if (zero? n) nil n))
+             (and hwnd-n (= 1 (num (:send-message ui-man (ids :front) 0 0)))))
+    :hwnd-number (fn [] hwnd-n)
+    :destroy (fn []
+               (when (ids :destroy) (:send-message ui-man (ids :destroy) 0 0))
+               (set hwnd-n nil))})
+
 (defn maximize
   "ShowWindow(SW_MAXIMIZE). Jwno's transform (the park) un-maximises a window; this puts it back."
   [hwnd]
@@ -186,7 +267,8 @@
                    {:left (in rect :left) :top (in rect :top) :right (in rect :right) :bottom (in rect :bottom)}))))
 
 (def win32
-  {:maximize maximize
+  {:make-focus-sink make-focus-sink
+   :maximize maximize
    :window-rect window-rect
    :foreground-hwnd foreground-hwnd
    :root-of root-of

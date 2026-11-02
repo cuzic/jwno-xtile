@@ -363,6 +363,17 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
     Check "CT-21a" "FAIL" "send 2 (precondition: focus reached the window)" ("os_focus=" + (State).os_focus)
   }
 
+  # ---- an empty workspace holds the OS focus in the sink window, not in a parked window (ADR 0006 D-7) ----
+  [void](Cmd ":xtile :goto 5")
+  $sunk = WaitFor { [C]::ClassOf([C]::GetForegroundWindow().ToInt64()) -eq "xtile-sink" } 8
+  Check "CT-23a" ($(if ($sunk) { "PASS" } else { "FAIL" })) "goto an empty workspace puts the OS focus in the sink window (not in a parked window)" ("foreground class=" + [C]::ClassOf([C]::GetForegroundWindow().ToInt64()) + " " + (FgInfo))
+  $sinkOk = (Count 'did not get the foreground') -eq 0
+  Check "CT-23b" ($(if ($sinkOk) { "PASS" } else { "INFO" })) "... without the foreground lock refusing the sink" ((LogLines | Where-Object { $_ -match 'did not get the foreground' } | Select-Object -First 1) -join "")
+  [void](Cmd ":xtile :goto 1")
+  $back1 = WaitFor { -not (Parked $i0) } 8
+  Check "CT-23c" ($(if ($back1) { "PASS" } else { "FAIL" })) "goto 1 brings the windows back after the sink was used" ("frame=" + ((Frame ([IntPtr]::new([int64]$i0))) -join ","))
+  Start-Sleep 2
+
   # ---- virtual desktops (ADR 0006 D-4): only the current Windows desktop is managed ----
   Focus $h2; Start-Sleep 1
   Chord 0x44   # Win+Ctrl+D: new desktop 2, switch to it

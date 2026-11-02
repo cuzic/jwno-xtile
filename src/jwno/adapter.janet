@@ -155,6 +155,23 @@
           (when (and (p :zoomed) (get win32 :maximize)) ((get win32 :maximize) hwnd))
           (put parked id nil)))))
 
+  # ---- the sink window (ADR 0006 D-7b): holds the OS focus when the visible workspace is empty ----
+  (var sink nil)
+  (defn focus-sink!
+    "-> true if the sink could be used (a refusal by the foreground lock is logged, not an error)."
+    []
+    (def mk (get win32 :make-focus-sink))
+    (def ui (get context :ui-manager))
+    (when (and mk ui)
+      (unless sink (set sink (mk ui)))
+      (def ok ((sink :front)))
+      (unless ok
+        (log-fn :info "focus-none: the sink window did not get the foreground (foreground lock?)"))
+      true))
+  (defn sink-number? [hwnd]
+    (when-let [s sink n ((s :hwnd-number))]
+      (= n (w :hwnd->number hwnd))))
+
   (defn front-on-screen?
     "ADR 0006 D-7f: is the front window one the user can see? (Only asked for reclaim effects.)
     Unknown means no: then the reclaim goes ahead."
@@ -233,8 +250,8 @@
                     (log-fn :debug (string/format "port-focus-none%s" (if reclaim " (reclaim)" "")))
                     (cond
                       (and reclaim (front-on-screen?)) true
-                      (get win32 :focus-sink) (do (w :focus-sink) true)
-                      (do (log-fn :warn "focus-none: no sink window (ADR 0006 D-7b is not built yet): the focus stays where it is")
+                      (focus-sink!) true
+                      (do (log-fn :warn "focus-none: no sink window available: the focus stays where it is")
                           true)))
       :close (fn [id] (:close (window-of id)))
       :hide hide
@@ -405,6 +422,7 @@
   (defn stop []
     (set stopped true)
     (restore-parked)
+    (when sink (protect ((sink :destroy))) (set sink nil))
     (when move-hook
       (protect (w :unwatch-moves move-hook))
       (set move-hook nil)))
@@ -520,7 +538,7 @@
     (each hwnd (top-level-hwnds)
       (def [ok err]
         (protect
-          (when (and (not (:find-hwnd (in wm :root) hwnd)) (on-current-desktop? hwnd))
+          (when (and (not (:find-hwnd (in wm :root) hwnd)) (on-current-desktop? hwnd) (not (sink-number? hwnd)))
             (cond
               # Opus M1 (a): Jwno's transform would un-maximise it before the core could classify it
               # (a maximised window is a float for the core): leave maximised windows alone
@@ -545,7 +563,7 @@
         (def [ok err]
           (protect
             (let [r (w :window-rect hwnd)]
-              (when (and r (< (r :left) (+ park-x 2000)) (not (w :minimized? hwnd)))
+              (when (and r (< (r :left) (+ park-x 2000)) (not (w :minimized? hwnd)) (not (sink-number? hwnd)))
                 (log-fn :info (string/format "recovering unmanaged window found off-screen at %q" r))
                 (:transform-hwnd wm hwnd
                                  {:left (wa :x) :top (wa :y)

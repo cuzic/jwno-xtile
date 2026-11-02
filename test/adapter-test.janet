@@ -80,7 +80,7 @@
   (def cmd-man @{:add-command (fn [self name f] (put w :xtile-command f))})
   (put w :wm wm)
   (put w :context @{:window-manager wm :hook-manager hook-man :virtual-desktop-manager vd-man
-                    :command-manager cmd-man :uia-manager uia-man})
+                    :command-manager cmd-man :uia-manager uia-man :ui-manager @{}})
   (put w :keymap keymap)
   (put w :win32
        {:foreground-hwnd (fn [] (w :fg))
@@ -927,3 +927,31 @@
   (def a (install-adapter w))
   ((a :start))
   (is= @[8] (map |($ 1) (calls-of w :window-opened))))
+
+(deftest "D-7b: focus-none uses the sink window; a refusal is still a success; the sink is never adopted or recovered; stop destroys it"
+  (def w (fake-world))
+  (def front-result @[true])
+  (put w :calls-push (fn [x] (array/push (w :calls) [x])))
+  (put w :win32
+       (table/to-struct
+         (merge (w :win32)
+                {:make-focus-sink (fn [ui]
+                                    @{:front (fn [] ((w :calls-push) :sink-front) (first front-result))
+                                      :hwnd-number (fn [] 999)
+                                      :destroy (fn [] ((w :calls-push) :sink-destroy))})
+                 :hwnd->number (fn [h] (h :ptr))})))
+  (array/push (w :top) 999 8)
+  (put (w :rects) 999 {:left -32000 :top -32000 :right -31999 :bottom -31999})   # the sink, off-screen
+  (put (w :rects) 8 {:left 100 :top 100 :right 400 :bottom 400})
+  (def a (install-adapter w))
+  (is= true ((get (a :ctx) :focus-none)))                          # the sink is made on first use ...
+  (is= 1 (length (calls-of w :sink-front)))
+  ((a :start))                                                     # ... and start (adopt / recover) must leave it alone
+  (is= @[8] (map |($ 1) (calls-of w :window-opened)))
+  (is= 0 (length (calls-of w :transform-hwnd)))
+  # a refusal: logged, and still a success (no recovery storm)
+  (put front-result 0 false)
+  (is= true ((get (a :ctx) :focus-none)))
+  (is (find |(string/find "did not get the foreground" ($ 1)) (w :logs)))
+  ((a :stop))
+  (is= 1 (length (calls-of w :sink-destroy))))
