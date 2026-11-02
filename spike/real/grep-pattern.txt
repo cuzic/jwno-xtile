@@ -1,1 +1,1 @@
-Exception|InvalidCast|E_|HRESULT|COM|例外|呼び出し|キャスト
+HrInit|hr=|THREW|\[ *[0-9.]+s\]
