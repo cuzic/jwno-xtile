@@ -600,3 +600,24 @@
   (def st1 ((u/update ((u/update s [:focus-changed :p]) :state) [:command :reclaim-focus]) :state))
   (is (st1 :reclaim-tries))
   (is (((u/update st1 [:command :refresh]) :state) :reclaim-tries)))
+
+# ---- ADR 0006 rev.5b: [:window-surfaced id] -------------------------------------------------
+
+(deftest "S-1: a window of a hidden workspace that stays on screen joins the visible workspace as a float, without a focus effect"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :m "2"] [:focus-changed :a]))
+  (def r (u/update s [:window-surfaced :m]))
+  (is= "1" (st/locate (r :state) :m))
+  (is (st/floating? (r :state) :m))
+  (is (find |(= $ [:show :m]) (r :effects)))
+  (is (not (find |(index-of (first $) [:focus :focus-none :place]) (tuple ;(filter |(= (get $ 1) :m) (r :effects))))))
+  (is= :a ((r :state) :os-focus))
+  (is= "1" ((r :state) :current))
+  (is= false ((r :state) :external-focus)))
+
+(deftest "S-1: unknown, malformed and already-visible windows change nothing; twice is the same as once"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :m "2"]))
+  (is= s ((u/update s [:window-surfaced :nobody]) :state))
+  (is= s ((u/update s [:window-surfaced :a]) :state))
+  (is= s ((u/update s [:window-surfaced]) :state))
+  (def once ((u/update s [:window-surfaced :m]) :state))
+  (is= once ((u/update once [:window-surfaced :m]) :state)))

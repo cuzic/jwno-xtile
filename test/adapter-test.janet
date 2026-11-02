@@ -1012,21 +1012,46 @@
   (is (> ((rect-of w 8) :left) -30000))                              # recovered ...
   (is= @[8] (map |($ 1) (calls-of w :window-opened))))              # ... and offered to Jwno (its centre is on screen now)
 
-(deftest "Opus F-M4: after giving up on a window, a :refresh does not start parking it again"
+(deftest "rev.5b: giving up tells the core (the window joins the visible workspace as a float) and lasts for the window's life"
   (def w (fake-world))
   (def a (install-adapter w))
   (managed-window w a 4)
+  (managed-window w a 5)
   (rt/dispatch (a :rt) [:command :goto "2"])
   (flush! w)
   (put w :fg nil)
   (for i 0 4
-    (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350}) ((a :poll-once)))
+    (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350}) ((a :poll-once)) (flush! w))
   (is (nil? (get (a :parked) 4)))
-  (rt/dispatch (a :rt) [:command :refresh])                           # hides every window of a hidden workspace again
-  (flush! w)
-  (is (nil? (get (a :parked) 4)))
+  (def s (state-of a))
+  (is= (s :current) (st/locate s 4))                                  # moved to the workspace we look at ...
+  (is (st/floating? s 4))                                             # ... as a float
+  # a refresh, and then a goto elsewhere: it is never parked again, and the core is told again so it follows us
+  (rt/dispatch (a :rt) [:command :refresh]) (flush! w)
   (is (> ((rect-of w 4) :left) -30000))
-  # a place (the window is wanted on screen again) ends the give-up
-  ((get (a :ctx) :place) 4 {:x 0 :y 0 :w 100 :h 100})
-  ((get (a :ctx) :hide) 4)
-  (is (get (a :parked) 4)))
+  (rt/dispatch (a :rt) [:command :goto "3"]) (flush! w)
+  (is (> ((rect-of w 4) :left) -30000))
+  (is= "3" (st/locate (state-of a) 4))
+  # the window's end clears the give-up
+  ((get (w :hooks) :window-removed) ((w :windows) 4))
+  (is (nil? (get (a :parked) 4))))
+
+(deftest "rev.5b/R5-M1: windows that come back together (a monitor change) are not counted; the count starts again after 30 s"
+  (def w (fake-world))
+  (def now @[0])
+  (def a (install-adapter w {:clock (fn [] (first now))}))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (rt/dispatch (a :rt) [:command :goto "2"]) (flush! w)
+  (put w :fg nil)
+  (defn surface! [n] (put (w :rects) n {:left 100 :top 50 :right 400 :bottom 350}))
+  # both come back at once, 6 times: never counted, always parked again, nothing given up
+  (for i 0 6 (surface! 4) (surface! 5) ((a :poll-once)) (flush! w))
+  (is (get (a :parked) 4))
+  (is (< ((rect-of w 4) :left) -30000))
+  # one window, 3 times within the window, then 40 seconds pass: counting starts again
+  (for i 0 3 (surface! 4) ((a :poll-once)) (flush! w))
+  (put now 0 40)
+  (surface! 4) ((a :poll-once)) (flush! w)
+  (is (get (a :parked) 4))
+  (is (< ((rect-of w 4) :left) -30000)))

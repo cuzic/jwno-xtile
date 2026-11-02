@@ -70,7 +70,7 @@
 
 (defn random-event [rng]
   (def id (keyword "w" (math/rng-int rng 12)))
-  (case (math/rng-int rng 23)
+  (case (math/rng-int rng 24)
     0 [:window-opened id]
     1 [:window-opened id (pick rng tags)]
     2 [:window-opened id "bogus"]
@@ -93,6 +93,7 @@
     16 [:command :toggle-float]
     18 [:window-dragged id (pick rng [(first screens) (g/rect 3 4 50 60) (g/rect (math/rng-int rng 40) 0 100 100)])]
     19 [:window-dragged id (g/rect 0 0 (+ 1 (math/rng-int rng 500)) 300)]
+    20 [:window-surfaced id]
     17 [:windows-observed
         (tuple ;(seq [_ :range [0 (math/rng-int rng 6)]]
                   [(keyword "w" (math/rng-int rng 12))
@@ -101,15 +102,15 @@
     (pick rng commands)))
 
 (def silent-kinds
-  {:focus-changed true :desktop-changed true :windows-observed true})
+  {:focus-changed true :desktop-changed true :windows-observed true :window-surfaced true})
 (def idempotent-kinds
-  {:window-opened true :window-seen true :window-dragged true :window-closed true :focus-changed true
+  {:window-opened true :window-seen true :window-dragged true :window-closed true :focus-changed true :window-surfaced true
    :desktop-changed true :screen-changed true :windows-observed true})
 
 # kinds that are not OS focus observations: they must never clear
 # :external-focus (E10)
 (def non-focus-observation
-  {:window-closed true :screen-changed true
+  {:window-closed true :screen-changed true :window-surfaced true
    :window-moved true :window-dragged true :command true})
 # window-opened may clear external focus only for the id last observed as OS
 # focus (Jwno reports focus before :window-opened) -- checked in check-external
@@ -331,8 +332,28 @@
              (not (or focus? none?)))
     (errorf "F12a (command) the OS focus stays on a parked window after %q: fx=%q os=%q cur=%q tag=%q focused=%q ext=%q" event fx (s :os-focus) (s :current) (st/locate s (s :os-focus)) (st/focused s) (s :external-focus))))
 
+(defn- valid-id-test? [x] (or (number? x) (keyword? x) (string? x)))
+
+(defn check-surfaced [old r event]
+  "S-1 (ADR 0006 rev.5b)"
+  (when (= (first event) :window-surfaced)
+    (def s (r :state))
+    (def id (get event 1))
+    (def was (and (valid-id-test? id) (st/locate old id)))
+    (cond
+      (or (nil? was) (= was (old :current)))
+      (unless (= s old) (errorf "S-1 an unknown/visible window changed the state: %q" event))
+      (do
+        (unless (= (st/locate s id) (s :current)) (errorf "S-1 the surfaced window is not on the current workspace: %q" event))
+        (unless (st/floating? s id) (errorf "S-1 the surfaced window is not a float: %q" event))
+        (unless (find |(= $ [:show id]) (r :effects)) (errorf "S-1 no :show for the surfaced window: %q" event))
+        (when (find |(and (= (first $) :place) (= (get $ 1) id)) (r :effects)) (errorf "S-1 a float was placed: %q" event))
+        (unless (= (old :current) (s :current)) (errorf "S-1 :current changed: %q" event))
+        (unless (= (old :os-focus) (s :os-focus)) (errorf "S-1 :os-focus changed: %q" event))))))
+
 (defn check-effects [old r event]
   (def s (r :state))
+  (check-surfaced old r event)
   (check-visibility old r event)
   (check-stray old r event)
   (check-dragged old r event)

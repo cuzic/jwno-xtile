@@ -37,6 +37,7 @@
   "WM workspaces (ADR 0006). They are groups inside the WM, independent of Windows' virtual desktops."
   (tuple "1" "2" "3" "4" "5" "6" "7" "8" "9"))
 
+(def repark-window 30)  # seconds: the re-park count of one window starts again after this long
 (def repark-limit 3)    # Opus M3: how often the poll parks the same window again before it gives up
 (def park-x -32000)
 (def park-y -32000)
@@ -60,6 +61,7 @@
   (def spawn (get opts :spawn (fn [f] (ev/spawn (f)))))
   (def later (get opts :later (fn [d f] (ev/spawn (ev/sleep d) (f)))))
   (def poll-seconds (get opts :poll-seconds 2))
+  (def clock (get opts :clock os/clock))
   (def swp (get win32 :swp-nomove-nosize))
   (def w (fn [name & args]
            (def f (get win32 name))
@@ -130,7 +132,9 @@
     (def win (window-of id))
     (def hwnd (get num->hwnd id))
     (if (get gave-up id)
-      (log-fn :debug (string/format "hide: not parking id=%q (given up earlier)" id))
+      (do (log-fn :debug (string/format "hide: not parking id=%q (given up earlier); the core is told again" id))
+          # R5-M3: the core thinks it is hidden: tell it again (it is idempotent) so it follows us to this workspace
+          (spawn (fn [] (dispatch! [:window-surfaced id]))))
     (if (w :minimized? hwnd)
       # not moved now (a minimised window has no real position); remember that it owes a park, so the poll
       # parks it as soon as it is restored (P-1: a restored window of a hidden workspace must not appear)
@@ -198,7 +202,6 @@
     "ADR 0006 D-6: the window enters the visible workspace. Parked: back to where it was. Not parked but
     found off-screen (the entry was lost, or the core forgot it): to the work area. Otherwise nothing."
     [id]
-    (put gave-up id nil)
     (if (get parked id)
       (unpark id)
       (when-let [hwnd (get num->hwnd id)
@@ -212,8 +215,7 @@
                         :w (min (- (r :right) (r :left)) (wa :w)) :h (min (- (r :bottom) (r :top)) (wa :h))})))))
 
   (defn place [id rect]
-    (put parked id nil)
-    (put gave-up id nil)         # being placed supersedes being parked
+    (put parked id nil)         # being placed supersedes being parked
     (def win (window-of id))
     (:transform win (rect->jwno rect) @{:swp-flags 0} wm)
     # Jwno swallows transform failures: read the result back and, if it differs, hand the
@@ -461,6 +463,17 @@
     a window the user maximised (D9 N3) and ignores floats. Not while a mouse button is down (the
     user may be dragging), not for minimised windows."
     []
+    # Opus R5-M1: if two or more parked windows are on screen at once, that is the environment (a monitor
+    # change, waking from sleep, RDP), not an app that insists: re-park them without counting
+    (def surfaced-now
+      (length (filter (fn [[id hwnd]]
+                        (def p (get parked id))
+                        (and p (not (p :pending)) (not (w :minimized? hwnd))
+                             (let [r (protect (when-let [win (:find-hwnd wm hwnd)] (visible-rect win)))]
+                               (and (r 0) (r 1) (> ((r 1) :x) (+ park-x 2000))))))
+                      (pairs num->hwnd))))
+    (def environment? (>= surfaced-now 2))
+    (def now (clock))
     (unless (w :mouse-down?)
       (each [id hwnd] (array ;(pairs num->hwnd))
         (def [ok err]
@@ -477,14 +490,24 @@
                     # the window the user is working in, and not for ever (Opus M3): after `repark-limit`
                     # tries the entry is dropped, so we stop fighting an app (or user) that wants it on screen
                     (when (and (> (rect :x) (+ park-x 2000)) (not= id (foreground)))
-                      (def n (get p :reparks 0))
-                      (if (>= n repark-limit)
+                      # the count is a series: it starts again `repark-window` seconds after its first re-park
+                      (def fresh? (or (nil? (p :series-start)) (> (- now (p :series-start)) repark-window)))
+                      (def n (if fresh? 0 (get p :reparks 0)))
+                      (def start (if fresh? now (p :series-start)))
+                      (cond
+                        environment?
+                        (do (log-fn :debug (string/format "re-parking id=%q: several windows came back at once, not counted" id))
+                            (move-to win (p :at)))
+                        (>= n repark-limit)
                         (do (log-fn :warn (string/format "giving up parking id=%q: it came back %d times" id n))
-                            (put gave-up id true)       # and stay given up: a :refresh must not start the fight again (F-M4)
-                            (put parked id nil))
+                            # given up for the window's life (a :refresh, a goto, a place do not start the fight
+                            # again); the core is told, so it moves the window to the workspace we look at
+                            (put gave-up id true)
+                            (put parked id nil)
+                            (spawn (fn [] (dispatch! [:window-surfaced id]))))
                         (do (log-fn :debug (string/format "re-parking id=%q found at %q (try %d)" id rect (+ n 1)))
                             (move-to win (p :at))
-                            (put parked id (struct ;(kvs p) :reparks (+ n 1)))))))
+                            (put parked id (struct ;(kvs p) :reparks (+ n 1) :series-start start))))))
                 (if (w :zoomed? hwnd)
                   (do
                     (log-fn :debug (string/format "compare: id=%q is maximised, rect=%q: floating it" id rect))

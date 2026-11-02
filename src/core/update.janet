@@ -3,6 +3,7 @@
 # Events (input data):
 #   [:window-opened id &opt tag]      [:window-closed id]
 #   [:window-seen id facts &opt tag]  (ADR 0008: classify once; later only hiding)
+#   [:window-surfaced id]             (the adapter gave up parking it: it joins the visible workspace as a float)
 #   [:window-dragged id rect]         (the user moved/resized it: floats, if rect differs from our placement)
 #   [:focus-changed id-or-nil]        [:desktop-changed tag]
 #   [:screen-changed rect]            [:window-moved id observed-rect]
@@ -134,6 +135,19 @@
   (if (= id (s :os-focus))
     (d/assoc s2 {:os-focus id :external-focus true})
     s2))
+
+(defn- window-surfaced
+  "ADR 0006 rev.5b: a window of a hidden workspace that stays on screen (the adapter gave up parking it) is
+  moved to the workspace we are looking at, as a float. Observation only: focus and `external` stay as they are."
+  [s id]
+  (def tag (when (valid-id? id) (st/locate s id)))
+  (cond
+    (nil? tag) s
+    (= tag (s :current)) s
+    (let [s2 (-> s
+                 (st/update-ws tag |(ws/remove $ id))
+                 (st/update-ws (s :current) |(ws/append $ id)))]
+      (set-floating s2 id true))))
 
 (defn- window-seen
   "Classify once, when a window becomes known; afterwards only hiding it matters."
@@ -567,6 +581,7 @@
             :window-closed [(close-window s (get args 0)) [] false]
             :window-dragged [(window-dragged s (get args 0) (get args 1)) [] false]
             :window-seen [(window-seen s (get args 0) (get args 1) (get args 2)) [] false]
+            :window-surfaced [(window-surfaced s (get args 0)) [] true]
             :focus-changed [(focus-window s (get args 0)) [] true]
             :desktop-changed [(desktop-changed s (get args 0)) [] true]
             :screen-changed [(if (valid-rect? (get args 0))
