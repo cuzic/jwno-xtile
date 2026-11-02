@@ -1,1 +1,1 @@
-^\[|rror|exception|1\. button|DeleteTab|Shot
+HrInit|hr=|\[ *[0-9.]+s\]
