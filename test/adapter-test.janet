@@ -96,6 +96,7 @@
         :minimized? (fn [h] (truthy? (get (w :minimized) (h :ptr))))
         :hung? (fn [h] (truthy? (get (w :hung) (h :ptr))))
         :window-rect (fn [h] (get (w :rects) (h :ptr)))
+        :maximize (fn [h] (rec :maximize (h :ptr)) true)
         :beep (fn [] (rec :beep))
         :zoomed? (fn [h] (truthy? (get (w :zoomed) (h :ptr))))
         :mouse-down? (fn [] (w :mouse))
@@ -565,7 +566,7 @@
   (is= -32000 (r :left))
   (is= -32000 (r :top))
   (is= 300 (- (r :right) (r :left)))                                       # same size
-  (is= {:rect {:x 100 :y 50 :w 300 :h 300} :at {:x -32000 :y -32000 :w 300 :h 300} :hwnd {:ptr 4}} (get (a :parked) 4))
+  (is= {:rect {:x 100 :y 50 :w 300 :h 300} :at {:x -32000 :y -32000 :w 300 :h 300} :hwnd {:ptr 4} :zoomed false} (get (a :parked) 4))
   ((get (a :ctx) :show) 4)
   (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4))
   (is (nil? (get (a :parked) 4)))
@@ -820,3 +821,24 @@
   (def a (install-adapter w))
   (is= true ((get (a :ctx) :focus-none)))
   (is (find |(string/find "no sink window" ($ 1)) (w :logs))))
+
+(deftest "J3: a maximised window is maximised again when it comes back from the park (Jwno's transform un-maximises it)"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 0 :top 0 :right 1000 :bottom 600})
+  (put (w :zoomed) 4 true)
+  ((get (a :ctx) :hide) 4)
+  (is (get-in (a :parked) [4 :zoomed]))
+  ((get (a :ctx) :hide) 4)                                          # a refresh re-parks it: still remembered
+  (is (get-in (a :parked) [4 :zoomed]))
+  (array/clear (w :calls))
+  ((get (a :ctx) :show) 4)
+  (is= 1 (length (calls-of w :maximize)))
+  # a window that was not maximised is not maximised on return
+  (managed-window w a 5)
+  (put (w :rects) 5 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 5)
+  (array/clear (w :calls))
+  ((get (a :ctx) :show) 5)
+  (is= 0 (length (calls-of w :maximize))))

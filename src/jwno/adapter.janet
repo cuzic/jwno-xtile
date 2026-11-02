@@ -126,9 +126,11 @@
     (unless (w :minimized? hwnd)
       (def prev (get parked id))
       (def rect (if prev (prev :rect) (visible-rect win)))
+      # Opus/J3: Jwno's transform un-maximises a window; remember it was maximised and maximise it again on return
+      (def zoomed (if prev (prev :zoomed) (w :zoomed? hwnd)))
       (def at {:x park-x :y park-y :w (rect :w) :h (rect :h)})
       (move-to win at)
-      (put parked id {:rect rect :at at :hwnd hwnd})))
+      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed})))
 
   (defn unpark
     "Put a parked window back where it was (a tile is placed again right after; a float stays there).
@@ -146,6 +148,7 @@
           (if-let [win (and (get num->hwnd id) (:find-hwnd wm hwnd))]
             (move-to win (p :rect))
             (:transform-hwnd wm hwnd (rect->jwno (p :rect)) @{:swp-flags 0}))
+          (when (and (p :zoomed) (get win32 :maximize)) ((get win32 :maximize) hwnd))
           (put parked id nil)))))
 
   (defn front-on-screen?

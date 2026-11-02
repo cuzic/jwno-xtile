@@ -172,6 +172,11 @@
              # jw32 returns a NULL pointer, not nil, for "no owner" (Jwno itself tests `null?`)
              (not (or (nil? owner) (null? owner))))})
 
+(defn maximize
+  "ShowWindow(SW_MAXIMIZE). Jwno's transform (the park) un-maximises a window; this puts it back."
+  [hwnd]
+  (guarded nil (fn [] (ShowWindow hwnd SW_MAXIMIZE) true)))
+
 (defn window-rect
   "GetWindowRect as {:left :top :right :bottom}, or nil if it cannot be read (a dead window, ...)."
   [hwnd]
@@ -181,7 +186,8 @@
                    {:left (in rect :left) :top (in rect :top) :right (in rect :right) :bottom (in rect :bottom)}))))
 
 (def win32
-  {:window-rect window-rect
+  {:maximize maximize
+   :window-rect window-rect
    :foreground-hwnd foreground-hwnd
    :root-of root-of
    :hwnd->number hwnd->number
