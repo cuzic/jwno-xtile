@@ -1,1 +1,1 @@
-HrInit|hr=|\[ *[0-9.]+s\]
+Exception|InvalidCast|E_|HRESULT|COM|例外|呼び出し|キャスト
