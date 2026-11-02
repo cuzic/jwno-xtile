@@ -18,10 +18,12 @@ public interface ITaskbarList {
   [PreserveSig] int SetActiveAlt(IntPtr hwnd);
 }
 public static class W {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool FlashWindow(IntPtr h, bool inv);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
 }
 "@
+[void][W]::SetProcessDPIAware()      # physical pixels: the picture of the taskbar must not be cut off at 125-200 % scaling
 $tb = [ITaskbarList](New-Object TaskbarListClass)
 Write-Host ("HrInit = " + $tb.HrInit())
 $f = New-Object System.Windows.Forms.Form
@@ -36,7 +38,7 @@ function Shot($name) {
   New-Item -ItemType Directory -Force -Path $ShotDir | Out-Null
   $scr = [System.Windows.Forms.Screen]::PrimaryScreen
   $b = $scr.Bounds; $wa = $scr.WorkingArea
-  $h = [Math]::Max($b.Bottom - $wa.Bottom, 0); if ($h -lt 20) { $h = 80 }     # auto-hidden taskbar: take the bottom 80 px
+  $h = [Math]::Max($b.Bottom - $wa.Bottom, 0) + 24; if ($h -lt 100) { $h = 100 }     # the taskbar plus a margin above it
   $w = [Math]::Min($b.Width, 1000); $x = $b.Left + [int](($b.Width - $w) / 2)
   $bmp = New-Object System.Drawing.Bitmap($w, $h)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
