@@ -1,6 +1,6 @@
 # 0011. `:sw-hide`: ワークスペースを `SW_HIDE` で隠す opt-in モード
 
-- 状態: Proposed（改訂 2、2026-11-02。Opus レビュー 1 回目の Med 6・Low 6 を反映。2 回目の確認待ち。実機は未検証）
+- 状態: Proposed（改訂 3、2026-11-02。Opus レビュー 2 回目の High 1・Med 2・Low 5 を反映。3 回目の確認待ち。実機は未検証）
 - 日付: 2026-11-02
 
 ## Context
@@ -96,3 +96,23 @@ ADR 0006 は `:sw-hide` を「将来の opt-in。採るなら、**終了時の�
   **L4** 隠した窓を表示したときに現れる仮想デスクトップ（隠したときか、現在か）は未確認。契約テストに入れる。**L5** owned 窓は所有者が隠れても残る（`:park` と同じ。所有者がタスクバーに無いので分かりにくい）。
   **L6** テスト: クラッシュの注入（印の付与前後・`SW_HIDE` の前後・`:show` の各段階）、Jwno の purge の遅れと UIA の遅れをフェイクに入れる、SW-4（先行書き込み: 不可視にした窓の集合 ⊆ 印とファイル）・SW-5・SW-6、
   park モードの既存テストが `:hide-mode` 既定のまま全て通ること。
+
+
+## 改訂 3（2026-11-02。Opus 2 回目の確認 A11b-H1・M1・M2・L1〜L5 を反映。改訂 2 までと食い違う点はここが優先）
+- **A11b-H1 起動時の回復の列挙は UIA ではなく `GetWindow` の走査**: UIA は `SW_HIDE` した不可視の窓を木に出さない（推論）ので、印があっても見つけられない。回復は
+  `GetWindow(GetDesktopWindow(), GW_CHILD)` から `GW_HWNDNEXT` で最上位の窓を**全部**辿り（不可視も含む）、`GetProp(hwnd, "jwno-xtile.hidden")` が付いた窓を戻す。jw32 に `GetDesktopWindow` が無ければ
+  `GetWindow(hwnd, GW_HWNDFIRST)` を使う手がある（`FindWindowEx(nil, nil, nil, nil)` の繰り返しでも辿れる）。`GetProp`／`RemoveProp`／`GetWindow` は jw32 にある。
+  **これを段階 1（`:sw-hide`）の最初の契約テストにする**: 窓に印を付けて `SW_HIDE` し、`GetWindow` の走査で見つかるか。
+- **A11b-M2 隠す・見せるは `SetWindowPos` の非同期**: `IsHungAppWindow` は jw32 に無く `hung?` は常に偽なので、応答の確認は当てにならない。`ShowWindow` の代わりに
+  `SetWindowPos(hwnd, nil, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_ASYNCWINDOWPOS|SWP_HIDEWINDOW)` で隠し、`...|SWP_SHOWWINDOW` で見せる
+  （`SWP_ASYNCWINDOWPOS` は他スレッドの窓でも呼び出し側をブロックしない）。結果の読み返し（`IsWindowVisible`）は次のポーリングで行う。`:show` の枠の復元は `transform-hwnd`（これも他スレッドの窓に同期でメッセージを送る点は `:park` と同じ）。
+- **A11b-M1 段階 0 のスパイクの確認項目**（park ＋ `DeleteTab`）: (1) 他プロセスの窓のタスクバーのボタンが消えるか、(2) アクティブ化・タイトルの変更・`FlashWindow`・`SetWindowPos` の後も消えたままか、
+  (3) Explorer の再起動（`TaskbarCreated`）の後、(4) 仮想デスクトップの往復の後、(5) Windows 11 の新しいタスクバーで効くか。持続しない場合は、ポーリングごとに `DeleteTab` をやり直す（安価）か、
+  段階 0 は動機を満たさないと判断する。Explorer の再起動には、Jwno の UI スレッドが処理する `TaskbarCreated` から main へ通知して、park 中の窓すべてに `DeleteTab` をやり直す経路を設計する。
+  ffi は、`ole32.dll` の `CoCreateInstance` を直接呼び、返った COM ポインタの vtable を `ffi/read` で読んで `HrInit`(3)・`AddTab`(4)・`DeleteTab`(5) を `ffi/call` で呼ぶ。COM は main スレッドで。誤ると Jwno が落ちるが、
+  park の窓は `recover-strays` で戻るので失われない。スパイクの前提: jwno.exe に ffi があるか（CI の `contract.log` の `ffi-has` 行で確認する。run 41407319883）。
+- **L1 `SetProp` の細部**: 印の付与に失敗したら**隠さない**（SW-4 の先行書き込みの一部）。データは `HANDLE`（ポインタ幅）なので、rect は 4×16 ビット（符号つき）に詰めるか、収まらなければ印は「隠した」だけとして rect はファイルに頼る。
+  jw32 の `SetProp` が整数を受けるか確かめる。プロパティ名の atom は 1 つ。窓の破棄でプロパティはシステムが片付ける。
+- **L2** `:showing` の入り直しの試行に上限（N 回）。超えたら記録を消し、合成をやめる（Core には、ghost として消えるに任せる）。**L3** 試行は `:showing` になってから 1 秒以上たった窓だけ（Jwno 自身の取り込みとの二重を避ける）。
+- **L4** `window-removed` で `extras` を消さない（`:hide` の時点で `extras` を記録に写す）。D-3 の該当の文言は改訂 2 で上書きされる。
+- **L5** ファイルは 1 世代遅れうる（書きかけで落ちた世代は捨てて前の世代を読む）。**印が正、ファイルは補助**（rect の復元用）と明記する。
