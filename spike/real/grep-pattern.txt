@@ -1,1 +1,1 @@
-HrInit|hr=|THREW|\[ *[0-9.]+s\]
+TB-3|TB-4|delete-tab|add-tab|cocreate|hrinit

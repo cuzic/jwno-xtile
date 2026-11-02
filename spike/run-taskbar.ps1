@@ -77,7 +77,8 @@ function TaskbarButtons($needle) {
 
 # our OWN test window (a WinForms form with a unique title, in its own process): never a window of the user's
 $pwsh = (Get-Process -Id $PID).Path
-$np = Start-Process -FilePath $pwsh -WindowStyle Minimized -PassThru -ArgumentList @("-NoProfile", "-STA", "-Command",
+# Hidden: no console window of its own (a console would keep a button in the same taskbar group and hide the effect)
+$np = Start-Process -FilePath $pwsh -WindowStyle Hidden -PassThru -ArgumentList @("-NoProfile", "-STA", "-Command",
   "Add-Type -AssemblyName System.Windows.Forms; `$f = New-Object System.Windows.Forms.Form; `$f.Text = 'XTILE-TB-SPIKE'; `$f.Width = 300; `$f.Height = 120; `$f.ShowInTaskbar = `$true; [System.Windows.Forms.Application]::Run(`$f)")
 [void](WaitFor { [T]::ByTitle("XTILE-TB-SPIKE") -ne [IntPtr]::Zero } 20)
 Start-Sleep 1
