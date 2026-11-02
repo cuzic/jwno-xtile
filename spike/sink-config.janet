@@ -61,12 +61,26 @@
 
 (defn front-sink [_hwnd _msg _wparam _lparam _hook state]
   (def h (in state :xtile-sink))
+  (defn fg? [] (= (util/pointer-to-number (GetForegroundWindow)) (util/pointer-to-number h)))
+  (defn alt-tap []
+    (SendInput [(INPUT :type INPUT_KEYBOARD :ki.wVk 0x12 :ki.dwFlags 0)
+                (INPUT :type INPUT_KEYBOARD :ki.wVk 0x12 :ki.dwFlags KEYEVENTF_KEYUP)]))
   (if (nil? h)
     (do (rec :sink-front-no-window) 0)
     (do
-      (def ok (SetForegroundWindow h))
-      (def fg (GetForegroundWindow))
-      (rec :sink-front ok (= (util/pointer-to-number fg) (util/pointer-to-number h)))
+      (var ok false)
+      # each variant is tried only if the one before failed; what worked is the answer
+      (SetForegroundWindow h)
+      (set ok (fg?)) (rec :sink-front :plain ok)
+      (unless ok
+        (alt-tap) (SetForegroundWindow h)
+        (set ok (fg?)) (rec :sink-front :alt-tap ok))
+      (unless ok
+        (ShowWindow h SW_MINIMIZE) (ShowWindow h SW_RESTORE) (SetForegroundWindow h)
+        (set ok (fg?)) (rec :sink-front :min-restore ok))
+      (unless ok
+        (alt-tap) (ShowWindow h SW_SHOW) (BringWindowToTop h) (SetForegroundWindow h)
+        (set ok (fg?)) (rec :sink-front :alt-show-top ok))
       (if ok 1 0))))
 
 (rec :step :front-defined)
