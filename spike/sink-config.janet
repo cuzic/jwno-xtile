@@ -93,6 +93,27 @@
   (def keymap (:new-keymap key-man))
   (:add-command (in jwno/context :command-manager) :sink-hotkey (fn [] (rec :hotkey-fired)))
   (:define-key keymap "Alt+Shift+F11" :sink-hotkey)
+  # the production flow is: user hotkey -> goto -> :focus-none. A hotkey is user input that Jwno's own
+  # process receives, so these two measure fronting WITH that right (a flag file gives Jwno none).
+  (:add-command (in jwno/context :command-manager) :sink-front-uia
+                (fn []
+                  (rec :cmd :front-uia)
+                  (def r (protect (let [h (FindWindowEx nil nil "xtile-sink-spike" nil)]
+                                    (:set-focus-to-hwnd (in jwno/context :window-manager) h) :ok)))
+                  (rec :cmd-result :front-uia (string (r 1)))))
+  (:add-command (in jwno/context :command-manager) :sink-front-ui
+                (fn []
+                  (rec :cmd :front-ui)
+                  (def r (protect (:send-message ui-man (msgs :front) 0 0)))
+                  (rec :cmd-result :front-ui (string (r 1)))))
+  (:add-command (in jwno/context :command-manager) :sink-destroy-cmd
+                (fn []
+                  (rec :cmd :destroy)
+                  (def r (protect (:send-message ui-man (msgs :destroy) 0 0)))
+                  (rec :cmd-result :destroy (string (r 1)))))
+  (:define-key keymap "Alt+Shift+F10" :sink-front-uia)
+  (:define-key keymap "Alt+Shift+F9" :sink-front-ui)
+  (:define-key keymap "Alt+Shift+F8" :sink-destroy-cmd)
   (:set-keymap key-man keymap))
 (rec :step :keymap-done)
 

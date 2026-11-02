@@ -49,6 +49,11 @@ function WaitFor([scriptblock]$pred, [int]$sec = 10) {
   while ((Get-Date) -lt $until) { if (& $pred) { return $true }; Start-Sleep -Milliseconds 250 }
   return [bool](& $pred)
 }
+function AltShift([byte]$vk) {
+  [S]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [S]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+  Key $vk
+  [S]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero); [S]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+}
 function Key([byte]$vk) { [S]::keybd_event($vk, 0, 0, [UIntPtr]::Zero); [S]::keybd_event($vk, 0, 2, [UIntPtr]::Zero) }
 # A REPL call that never returns must not hang the job (it did once): 15 s, then give up.
 function Cmd($c) {
@@ -77,9 +82,20 @@ if ($line -and $line -match 'sink-created (\d+)') {
   Check "SK-2" ($(if ($ok -ne [IntPtr]::Zero) { "PASS" } else { "FAIL" })) "the sink answers a message from another process (Jwno has no message pump of the adapter here)" "answered=$($ok -ne [IntPtr]::Zero) in ${ms}ms; IsHungAppWindow=$([S]::IsHungAppWindow($h))"
 
   # SK-3: it can be brought to the front
+  # (a) the production flow: a user hotkey reaches Jwno, and its command fronts the sink
+  AltShift 0x79                                             # Alt+Shift+F10: UIA SetFocus on the main thread
+  $viaUia = WaitFor { [S]::GetForegroundWindow() -eq $h } 4
+  Check "SK-3u" ($(if ($viaUia) { "PASS" } else { "FAIL" })) "fronted by a Jwno command (UIA SetFocus), triggered by a user hotkey" ((LogLines | Where-Object { $_ -match 'cmd' } | Select-Object -Last 2) -join " | ")
+  $viaUi = $false
+  if (-not $viaUia) {
+    AltShift 0x78                                           # Alt+Shift+F9: SetForegroundWindow on the UI thread
+    $viaUi = WaitFor { [S]::GetForegroundWindow() -eq $h } 4
+    Check "SK-3v" ($(if ($viaUi) { "PASS" } else { "FAIL" })) "fronted by a Jwno command (SetForegroundWindow on the UI thread), triggered by a user hotkey" ((LogLines | Where-Object { $_ -match 'cmd|sink-front' } | Select-Object -Last 3) -join " | ")
+  }
+  # (b) without any input (a flag file): what the first runs measured
   New-Item -ItemType File -Force -Path (Join-Path $Out "front.flag") | Out-Null
   $out = "flag"
-  $got = WaitFor { [S]::GetForegroundWindow() -eq $h } 6
+  $got = $viaUia -or $viaUi -or (WaitFor { [S]::GetForegroundWindow() -eq $h } 6)
   Check "SK-3" ($(if ($got) { "PASS" } else { "FAIL" })) "Jwno's own process can make the sink the foreground window" ("repl=$out; log: " + ((LogLines | Where-Object { $_ -match 'sink-front' }) -join " | "))
   if (-not $got) {
     $rc = New-Object S+RC; [void][S]::GetWindowRect($h, [ref]$rc)
@@ -134,7 +150,7 @@ if ($line -and $line -match 'sink-created (\d+)') {
     # SK-7: what Jwno's focus-changed hook says about the sink
     Check "SK-7" "INFO" "what Jwno's :focus-changed reports (hwnd values; the sink is $($Matches[1]))" ((LogLines | Where-Object { $_ -match 'jwno-focus-changed' } | Select-Object -Last 3) -join " | ")
   }
-  New-Item -ItemType File -Force -Path (Join-Path $Out "destroy.flag") | Out-Null
+  AltShift 0x77                                             # Alt+Shift+F8: destroy through a command
   [void](WaitFor { -not [S]::IsWindow($h) } 4)
   Check "SK-8" ($(if (-not [S]::IsWindow($h)) { "PASS" } else { "FAIL" })) "the sink can be destroyed again (and so rebuilt)" "alive=$([S]::IsWindow($h))"
 }
