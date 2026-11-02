@@ -80,7 +80,9 @@
   workspace still exists. A window that comes back goes home instead of to the workspace we look at."
   [s id]
   (def t (get-in s [:hidden-from id]))
-  (when (and t (valid-tag? s t)) t))
+  # Opus F-H1: a window that is the OS focus when it returns was activated by the user (taskbar, Alt-Tab):
+  # it belongs where they are looking. Only a quiet restore (no activation) goes home.
+  (when (and t (valid-tag? s t) (not= id (s :os-focus))) t))
 
 (defn- forget-hidden-from [s id]
   (if (get-in s [:hidden-from id])
@@ -541,8 +543,9 @@
   (def args (tail event))
   # any command other than :reassert-focus is a new intent: forget the pending one
   (def internal? (and (= kind :command) (index-of (get args 0) [:reassert-focus :reclaim-focus])))
-  (def s (if (and (= kind :command) (not internal?))
-           (-> s0 (d/without :pending-focus) (d/without :stray-own) (d/without :reclaim-tries))
+  (def s (cond
+           (and (= kind :command) (= (get args 0) :refresh)) (d/without s0 :pending-focus)   # R-8 recovery: keep the reclaim bookkeeping
+           (and (= kind :command) (not internal?)) (-> s0 (d/without :pending-focus) (d/without :stray-own) (d/without :reclaim-tries))
            s0))
   (cond
     (and (= kind :command) (= (get args 0) :refresh))

@@ -172,6 +172,7 @@
     (def r0 (protect (u/update (rt :state) [:focus-changed (if ok id)])))
     (when (first r0)
       (put rt :state ((last r0) :state))))
+  (def was-stray (u/stray? (rt :state)))
   (def [ok r] (protect (u/update (rt :state) event)))
   (if (not ok)
     (log rt :error (string "update threw: " r))
@@ -186,7 +187,11 @@
         (schedule-reobserve rt))
       # an OS focus change that is not our own look at the front window (Jwno's hook, the re-observation
       # timer): if it left the focus on a parked window, the core is asked about it (D-7c)
-      (when (and (= (get event 0) :focus-changed) (not= (get event 2) :observed) (u/stray? (rt :state)))
+      # ... and also when ANY event (a silent snapshot that puts a restored window back on a hidden workspace)
+      # made the focus stray that was not stray before (Opus F-H1); the core counts the tries
+      (when (and (u/stray? (rt :state))
+                 (or (and (= (get event 0) :focus-changed) (not= (get event 2) :observed))
+                     (not was-stray)))
         (schedule-reclaim rt)))))
 
 (defn dispatch [rt event]

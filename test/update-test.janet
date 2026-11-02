@@ -573,3 +573,30 @@
   (is (nil? (get-in ghost [:hidden-from :p])))
   (is= "1" (st/locate ((u/update ghost [:window-opened :p]) :state) :p))
   (is (nil? (get-in ((u/update gone [:window-closed :p]) :state) [:hidden-from :p]))))
+
+(deftest "Opus F-H1: a window the user activated while it was minimised comes back to the workspace they are on"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :p "2"]))
+  (def gone ((u/update s [:windows-observed [[:a nil {:visible? true}] [:p nil {:visible? true :minimized? true}]]]) :state))
+  # restored from the taskbar: it is the OS focus now (the focus event comes before the snapshot)
+  (def active ((u/update gone [:focus-changed :p]) :state))
+  (def back ((u/update active [:windows-observed [[:a nil {:visible? true}] [:p nil {:visible? true}]]]) :state))
+  (is= "1" (st/locate back :p))
+  # a quiet restore (no activation) still goes home
+  (def quiet ((u/update gone [:windows-observed [[:a nil {:visible? true}] [:p nil {:visible? true}]]]) :state))
+  (is= "2" (st/locate quiet :p)))
+
+(deftest "4e: :stray-own is not cleared by the observation of the stray window itself (a :follow must not undo our own goto)"
+  (def f (st/make {:x 0 :y 0 :w 1000 :h 600} ["1" "2" "3"] [] :follow))
+  (def [s _] (run f [:window-opened :a] [:focus-changed :a]))
+  (def g ((u/update s [:command :goto "3"]) :state))
+  (def seen ((u/update g [:focus-changed :a]) :state))                # the OS still reports :a in front
+  (is= "3" (((u/update seen [:command :reclaim-focus]) :state) :current))
+  # a different window in front ends the mark
+  (def other ((u/update seen [:focus-changed :zzz]) :state))
+  (is (nil? (other :stray-own))))
+
+(deftest "F-L3: a :refresh (the runtime's recovery) keeps the reclaim bookkeeping"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :p "2"] [:focus-changed :a]))
+  (def st1 ((u/update ((u/update s [:focus-changed :p]) :state) [:command :reclaim-focus]) :state))
+  (is (st1 :reclaim-tries))
+  (is (((u/update st1 [:command :refresh]) :state) :reclaim-tries)))

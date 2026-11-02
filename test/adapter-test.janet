@@ -918,7 +918,7 @@
       (drain! w)
       (check-p1 w a (string/format "seed %d step %d ops %q" seed step log)))))
 
-(deftest "Opus M1: adopt-existing! leaves maximised windows and windows of another monitor alone"
+(deftest "Opus M1/F-M3: adopt-existing! leaves windows of another monitor alone and maximises a maximised window again after taking it in"
   (def w (fake-world))
   (array/push (w :top) 6 7 8)
   (put (w :rects) 6 {:left 0 :top 0 :right 1000 :bottom 600})          # maximised
@@ -927,7 +927,8 @@
   (put (w :rects) 8 {:left 100 :top 100 :right 400 :bottom 400})       # an ordinary window of the primary monitor
   (def a (install-adapter w))
   ((a :start))
-  (is= @[8] (map |($ 1) (calls-of w :window-opened))))
+  (is= @[6 8] (map |($ 1) (calls-of w :window-opened)))
+  (is= @[6] (map |($ 1) (calls-of w :maximize))))                      # only the maximised one is maximised again
 
 (deftest "D-7b: focus-none uses the sink window; a refusal is still a success; the sink is never adopted or recovered; stop destroys it"
   (def w (fake-world))
@@ -1001,3 +1002,31 @@
   (is (not (first (protect ((get (a :ctx) :place) 4 {:x 0 :y 0 :w 10 :h 10})))))
   (is= 0 (length (calls-of w :window-set-focus)))
   (is= 0 (length (calls-of w :transform))))
+
+(deftest "Opus F-M2: a window left off-screen by a crashed run is brought back BEFORE it is adopted, so it is managed"
+  (def w (fake-world))
+  (array/push (w :top) 8)
+  (put (w :rects) 8 {:left -32000 :top -32000 :right -31700 :bottom -31700})
+  (def a (install-adapter w))
+  ((a :start))
+  (is (> ((rect-of w 8) :left) -30000))                              # recovered ...
+  (is= @[8] (map |($ 1) (calls-of w :window-opened))))              # ... and offered to Jwno (its centre is on screen now)
+
+(deftest "Opus F-M4: after giving up on a window, a :refresh does not start parking it again"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (rt/dispatch (a :rt) [:command :goto "2"])
+  (flush! w)
+  (put w :fg nil)
+  (for i 0 4
+    (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350}) ((a :poll-once)))
+  (is (nil? (get (a :parked) 4)))
+  (rt/dispatch (a :rt) [:command :refresh])                           # hides every window of a hidden workspace again
+  (flush! w)
+  (is (nil? (get (a :parked) 4)))
+  (is (> ((rect-of w 4) :left) -30000))
+  # a place (the window is wanted on screen again) ends the give-up
+  ((get (a :ctx) :place) 4 {:x 0 :y 0 :w 100 :h 100})
+  ((get (a :ctx) :hide) 4)
+  (is (get (a :parked) 4)))

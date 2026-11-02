@@ -446,3 +446,16 @@
   (put os2 :fg :a)
   (rt/dispatch r2 [:command :goto "2"])
   (is (= 0 (r2 :failures))))
+
+(deftest "Opus F-H1: a SILENT snapshot that leaves the focus on a parked window schedules a reclaim as well"
+  (def os (fake-os))
+  (def r (rt/make (with-focus-none os) (st/make screen ["1" "2" "3"])))
+  (rt/dispatch r [:window-opened :a]) (rt/dispatch r [:focus-changed :a])
+  (put os :fg :p)
+  (rt/dispatch r [:focus-changed :p])                                  # :p is unknown: not stray, no reclaim
+  (put os :windows [:a :p])
+  (run-later! os)
+  (array/clear (os :later))
+  # the snapshot now puts :p on a hidden workspace (it was home there): the focus becomes stray with no focus event
+  (rt/dispatch r [:windows-observed [[:a nil] [:p "2"]]])
+  (is (> (length (os :later)) 0)))

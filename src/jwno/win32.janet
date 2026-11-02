@@ -194,6 +194,9 @@
     (DefWindowProc hwnd msg wparam lparam)))
 
 (defn- sink-create [_hwnd _msg _wparam _lparam _hook state]
+  # a sink that was destroyed some other way is made again (Opus F-L1)
+  (when-let [old (in state :xtile-sink)]
+    (when (= FALSE (IsWindow old)) (put state :xtile-sink nil)))
   (if-let [old (in state :xtile-sink)]
     (util/pointer-to-number old)
     (do
@@ -216,14 +219,18 @@
   (defn alt-tap []
     (SendInput [(INPUT :type INPUT_KEYBOARD :ki.wVk 0x12 :ki.dwFlags 0)
                 (INPUT :type INPUT_KEYBOARD :ki.wVk 0x12 :ki.dwFlags KEYEVENTF_KEYUP)]))
+  # Opus F-M1: an injected Alt would break a modifier the user is holding (Alt+3 held down ...): then do
+  # not inject; the refusal is retried by :reclaim-focus once the keys are up
+  (defn modifier-down? []
+    (some (fn [vk] (neg? (int/to-number (GetAsyncKeyState vk)))) [0x12 0x10 0x11 0x5B 0x5C]))
   (if (nil? h)
     0
     (do
       (var ok false)
       (SetForegroundWindow h)
       (set ok (fg?))
-      (unless ok (alt-tap) (SetForegroundWindow h) (set ok (fg?)))      # the variant that worked in the spike
-      (unless ok (ShowWindow h SW_MINIMIZE) (ShowWindow h SW_RESTORE) (SetForegroundWindow h) (set ok (fg?)))
+      (when (and (not ok) (not (modifier-down?)))       # the variant that worked in the spike
+        (alt-tap) (SetForegroundWindow h) (set ok (fg?)))
       (if ok 1 0))))
 
 (defn- sink-destroy [_hwnd _msg _wparam _lparam _hook state]

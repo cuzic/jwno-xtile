@@ -107,7 +107,8 @@
     (if ok ds @[]))
 
   # ---- parking: a window of another workspace is moved off-screen and remembered ----------
-  (def parked @{})   # id -> {:rect where it was :at where we put it}; OS-boundary memory, not WM state
+  (def parked @{})   # id -> {:rect where it was :at where we put it ...}; OS-boundary memory, not WM state
+  (def gave-up @{})  # ids we stopped parking after `repark-limit` tries; cleared by a place/show or the window's end
 
   # ---- ports ------------------------------------------------------------------------------
   (defn work-area []
@@ -128,6 +129,8 @@
     [id]
     (def win (window-of id))
     (def hwnd (get num->hwnd id))
+    (if (get gave-up id)
+      (log-fn :debug (string/format "hide: not parking id=%q (given up earlier)" id))
     (if (w :minimized? hwnd)
       # not moved now (a minimised window has no real position); remember that it owes a park, so the poll
       # parks it as soon as it is restored (P-1: a restored window of a hidden workspace must not appear)
@@ -144,7 +147,7 @@
       (let [after (protect (visible-rect win))]
         (when (and (after 0) (> ((after 1) :x) (+ park-x 2000)))
           (log-fn :warn (string/format "hide: window %q is still on screen at %q after the park" id (after 1)))))
-      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed :reparks (if prev (get prev :reparks 0) 0)}))))
+      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed :reparks (if prev (get prev :reparks 0) 0)})))))
 
   (defn unpark
     "Put a parked window back where it was (a tile is placed again right after; a float stays there).
@@ -195,6 +198,7 @@
     "ADR 0006 D-6: the window enters the visible workspace. Parked: back to where it was. Not parked but
     found off-screen (the entry was lost, or the core forgot it): to the work area. Otherwise nothing."
     [id]
+    (put gave-up id nil)
     (if (get parked id)
       (unpark id)
       (when-let [hwnd (get num->hwnd id)
@@ -208,7 +212,8 @@
                         :w (min (- (r :right) (r :left)) (wa :w)) :h (min (- (r :bottom) (r :top)) (wa :h))})))))
 
   (defn place [id rect]
-    (put parked id nil)         # being placed supersedes being parked
+    (put parked id nil)
+    (put gave-up id nil)         # being placed supersedes being parked
     (def win (window-of id))
     (:transform win (rect->jwno rect) @{:swp-flags 0} wm)
     # Jwno swallows transform failures: read the result back and, if it differs, hand the
@@ -345,6 +350,7 @@
                (def n (w :hwnd->number (in win :hwnd)))   # the window may already be dead: no GA_ROOT
                (put num->hwnd n nil)
                (put extras n nil)
+               (put gave-up n nil)
                # ADR 0006 D-6 (Opus D6-M1): keep the entry while the window lives (an app hiding itself in the
                # tray is purged by Jwno and comes back to its parked position); a dead window loses it
                (when-let [p (get parked n)]
@@ -474,6 +480,7 @@
                       (def n (get p :reparks 0))
                       (if (>= n repark-limit)
                         (do (log-fn :warn (string/format "giving up parking id=%q: it came back %d times" id n))
+                            (put gave-up id true)       # and stay given up: a :refresh must not start the fight again (F-M4)
                             (put parked id nil))
                         (do (log-fn :debug (string/format "re-parking id=%q found at %q (try %d)" id rect (+ n 1)))
                             (move-to win (p :at))
@@ -557,16 +564,17 @@
         (protect
           (when (and (not (:find-hwnd (in wm :root) hwnd)) (on-current-desktop? hwnd) (not (sink-number? hwnd)))
             (cond
-              # Opus M1 (a): Jwno's transform would un-maximise it before the core could classify it
-              # (a maximised window is a float for the core): leave maximised windows alone
-              (w :zoomed? hwnd)
-              (log-fn :debug "adopt-existing: leaving a maximised window alone")
               # Opus M1 (e): the core has one monitor; a window whose centre is elsewhere is not ours
               (let [r (and pf (pf hwnd))]
                 (and r (let [cx (div (+ (r :left) (r :right)) 2) cy (div (+ (r :top) (r :bottom)) 2)]
                          (or (< cx (wa :x)) (>= cx (+ (wa :x) (wa :w))) (< cy (wa :y)) (>= cy (+ (wa :y) (wa :h)))))))
               (log-fn :debug "adopt-existing: leaving a window of another monitor alone")
-              (:window-opened wm hwnd)))))
+              (let [zoomed (w :zoomed? hwnd)]
+                # Opus F-M3: Jwno's transform un-maximises a window it takes in; a maximised window left out
+                # would be un-maximised at its first focus anyway and covers every workspace meanwhile. Take
+                # it in and maximise it again; the next poll sees it maximised and the core floats it.
+                (:window-opened wm hwnd)
+                (when (and zoomed (get win32 :maximize)) ((get win32 :maximize) hwnd)))))))
       (unless ok (log-fn :debug (string "adopt-existing: " err)))))
 
   (defn recover-strays
@@ -601,10 +609,10 @@
   (defn start
     "Hooks are already registered (R-7): sync, then start polling."
     []
+    (recover-strays)        # first: a window left off-screen by a crashed run must be back on screen to be adopted (F-M2)
     (adopt-existing!)
     (when (> (length (desktops)) 1)
       (log-fn :warn "more than one Windows virtual desktop: only the current one is managed, and switching desktops resets the WM state of the windows (ADR 0006 D-4)"))
-    (recover-strays)
     (rt/start rtm)
     (schedule-pump)
     (schedule-poll))

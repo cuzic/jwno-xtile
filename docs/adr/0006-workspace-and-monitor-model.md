@@ -240,4 +240,9 @@ Opus レビュー（H1・H3）に従い、**既定を `:park`（窓を画面外 
 - **sink 窓**: ホスト型 Windows Server 2022 のスパイクで、UI スレッド上で作れる・別プロセスのメッセージに答える・打鍵と Alt+F4 を捨てる・前面でも Jwno の束縛が効く、を確認した。
   前面化は、`SetForegroundWindow` を UI スレッドから呼ぶだけでは拒否され、**直前の Alt の打鍵（`SendInput`）のあと**に通った。UIA の `SetFocus` では前面にならなかった。実装は `win32.janet` の `make-focus-sink`。
   実機（Windows 11）、IME、Narrator は**未検証**。拒否されたときは「成功扱い＋ログ」で、`:reclaim-focus` の再試行（3 回）に任せる。
-- 未対応: 再 park の上限（Opus M3）、`hide` の結果の読み返し（M6）、`[:window-surfaced id]`、全画面の窓（M5）、最小化から戻したときの割り当て（M4）。
+- Opus の最終確認（2026-11-02）への対応: F-H1（`:reclaim-focus` の予約を「focus が stray になった瞬間」にも拡大。アクティブにして戻した最小化の窓は、元の WS ではなく**現在の WS** へ）、
+  F-M1（修飾キーが押されている間は Alt を注入しない。拒否は `:reclaim-focus` の再試行に任せる）、F-M2（起動時は `recover-strays` を `adopt-existing!` の前に）、
+  F-M3（最大化した窓は取り込んでから最大化し直す）、F-M4（再 park を諦めた窓は `:refresh` でも park しない）、F-L1（壊れた sink の作り直し）、F-L2（最小化→復元の手を削除）、
+  F-L3（`:refresh` は reclaim の記録を消さない）。
+- **sink の前面化は Alt の注入（`SendInput`）に依存する**（ホスト型で、UI スレッドからの単独の `SetForegroundWindow` は拒否された）。修飾キーが物理的に押されているときは注入しないので、その間は拒否になる。実機は未検証。
+- 未対応: `[:window-surfaced id]`（再 park を諦めた窓を可視ワークスペースへ移す Core の event）。全画面の窓は画面に残る（M5、D-5 に記録）。
