@@ -125,3 +125,9 @@ ADR 0006 は `:sw-hide` を「将来の opt-in。採るなら、**終了時の�
 - **L3 印の外し忘れを防ぐ**: 印（`SetProp`）は、(a) `:show` で表示したとき、(b) `[:window-surfaced id]` のとき、(c) 前面で再表示されたとき、(d) 起動時の走査で可視だったとき、のいずれでも `RemoveProp` する。
   外し忘れると、ユーザーがトレイに閉じた不可視の窓を次の起動で勝手に出す。起動時の回復は「印があり、不可視で、記録の PID と一致する窓」だけを戻す。
 - **L4** 同期の `show` が応答しない窓で止まる危険を受け入れる旨は上記のとおり。
+
+## 段階 0 のスパイクの結果（2026-11-02、ホスト型 Windows Server 2022、run 41409792021）
+- Janet の FFI は jwno.exe に入っている（`ffi/native`・`ffi/call` が使える）。`CoCreateInstance(CLSID_TaskbarList)` → `HrInit` → `DeleteTab`／`AddTab` を **FFI の vtable 呼び出しで実行でき、いずれも `S_OK`**。Jwno は落ちなかった
+  （`spike/taskbar-config.janet`）。jw32 に `ITaskbarList` が無くても実装できる。
+- **タスクバーのボタンが実際に消えたかは、ホスト CI では観測できなかった**（UI Automation でタスクバーのボタンを数えても常に 0 件）。効果（他プロセスの窓に効くか、アクティブ化・タイトル変更・点滅・Explorer の再起動・
+  仮想デスクトップの往復の後も消えたままか、Windows 11 のタスクバーで効くか）は**実機で確かめる**（`spike/run-taskbar.ps1` を実機用に使える）。
