@@ -121,6 +121,7 @@ if ($up) {
   [void][T]::FlashWindow($nph, $true); Start-Sleep 2; Shot "5-flashed"
   $a3 = TaskbarButtons "spike"
   Check "TB-5c" "INFO" "after FlashWindow" ($(if ($null -eq $a3) { "no taskbar" } else { "$($a3.Count)" }))
+  [void][T]::SendMessage($nph, 0x000C, [IntPtr]::Zero, "XTILE-TB-SPIKE")   # the config finds the window by this title
   AltShift 0x75                                         # Alt+Shift+F6: AddTab
   Start-Sleep 2; Shot "6-AddTab"
   $back = TaskbarButtons "spike"
