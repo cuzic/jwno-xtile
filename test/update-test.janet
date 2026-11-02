@@ -553,3 +553,23 @@
   (def gone ((u/update s [:windows-observed []]) :state))              # forgotten
   (def r (u/update gone [:windows-observed [[:f nil]]]))              # seen again, lands on the visible workspace
   (is (find |(= $ [:show :f]) (r :effects))))
+
+# ---- Opus M4: a window minimised on a hidden workspace goes home when it comes back ----------
+
+(deftest "M4: minimised on workspace 2, restored while looking at workspace 1: back on workspace 2"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :p "2"]))
+  (def gone ((u/update s [:windows-observed [[:a nil {:visible? true}] [:p nil {:visible? true :minimized? true}]]]) :state))
+  (is (nil? (st/locate gone :p)))
+  (def back ((u/update gone [:windows-observed [[:a nil {:visible? true}] [:p nil {:visible? true}]]]) :state))
+  (is= "2" (st/locate back :p))
+  (is (nil? (get-in back [:hidden-from :p]))))
+
+(deftest "M4: an explicit tag beats the remembered home; a window that left the OS is forgotten; closing forgets too"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :p "2"]))
+  (def gone ((u/update s [:windows-observed [[:a nil {:visible? true}] [:p nil {:visible? true :minimized? true}]]]) :state))
+  (is= "3" (st/locate ((u/update gone [:window-opened :p "3"]) :state) :p))
+  # the window disappeared from the OS while minimised: the memory goes with it (ids are reused)
+  (def ghost ((u/update gone [:windows-observed [[:a nil {:visible? true}]]]) :state))
+  (is (nil? (get-in ghost [:hidden-from :p])))
+  (is= "1" (st/locate ((u/update ghost [:window-opened :p]) :state) :p))
+  (is (nil? (get-in ((u/update gone [:window-closed :p]) :state) [:hidden-from :p]))))

@@ -75,12 +75,25 @@
 
 # ---- observations ------------------------------------------------------
 
-(defn- open-window [s id tag]
+(defn- hidden-tag
+  "Opus M4: the workspace a window was on when it was dropped for being minimised/fullscreen, if that
+  workspace still exists. A window that comes back goes home instead of to the workspace we look at."
+  [s id]
+  (def t (get-in s [:hidden-from id]))
+  (when (and t (valid-tag? s t)) t))
+
+(defn- forget-hidden-from [s id]
+  (if (get-in s [:hidden-from id])
+    (d/assoc s {:hidden-from (d/without (s :hidden-from) id)})
+    s))
+
+(defn- open-window [s0 id tag]
+  (def s (if (valid-id? id) (forget-hidden-from s0 id) s0))
   (cond
     (not (valid-id? id)) s
     (known? s id) s
     (and tag (not (valid-tag? s tag))) s
-    (let [tag (or tag (s :current))
+    (let [tag (or tag (hidden-tag s0 id) (s :current))
           s2 (st/update-ws s tag |(ws/insert $ id))]
       # Jwno reports focus on a new hwnd BEFORE :window-opened, and does not
       # repeat it. If this is the window the OS already focused, adopt that
@@ -93,9 +106,10 @@
   (def tag (st/locate s id))
   (def s1 (if tag (st/update-ws s tag |(ws/remove $ id)) s))
   # forget everything keyed on this id: HWNDs get reused
-  (def s1b (if (get-in s1 [:floating id])
-             (d/assoc s1 {:floating (d/without (s1 :floating) id)})
-             s1))
+  (def s1a (forget-hidden-from s1 id))
+  (def s1b (if (get-in s1a [:floating id])
+             (d/assoc s1a {:floating (d/without (s1a :floating) id)})
+             s1a))
   (def s2 (if (get-in s1b [:misfit id])
             (d/assoc s1b {:misfit (d/without (s1b :misfit) id)})
             s1b))
@@ -112,7 +126,9 @@
   focus, keep that observation and mark focus external: the OS focus is now on
   something we do not manage, so we must not pull it to a neighbour (ADR 0008)."
   [s id]
-  (def s2 (close-window s id))
+  (def home (st/locate s id))
+  (def s2a (close-window s id))
+  (def s2 (if home (d/assoc s2a {:hidden-from (d/assoc (get s2a :hidden-from {}) {id home})}) s2a))
   (if (= id (s :os-focus))
     (d/assoc s2 {:os-focus id :external-focus true})
     s2))
@@ -199,7 +215,9 @@
                     (def have (st/locate acc id))
                     (cond
                       (nil? have)
-                      (let [a2 (st/update-ws acc (or tag (acc :current)) |(ws/append $ id))
+                      (let [a2 (-> acc
+                                   (st/update-ws (or tag (hidden-tag acc id) (acc :current)) |(ws/append $ id))
+                                   (forget-hidden-from id))
                             f (if (dictionary? facts) facts)]
                         (if (and f (= :float (cl/classify (a2 :rules) f)))
                           (set-floating a2 id true)
@@ -209,6 +227,11 @@
                           (st/update-ws have |(ws/remove $ id))
                           (st/update-ws tag |(ws/append $ id)))))
                   s1 ordered)
+            # a remembered home of a window the OS no longer has at all is dropped (ids are reused)
+            acc (if (empty? (get acc :hidden-from {}))
+                  acc
+                  (let [m (acc :hidden-from)]
+                    (d/assoc acc {:hidden-from (table/to-struct (from-pairs (seq [k :keys m :when (first-seen k)] [k (m k)])))})))
             os (acc :os-focus)]
         # The OS focus may have been observed before this window set was (at
         # startup, or a snapshot adding the focused window). That observation
