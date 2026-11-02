@@ -1,6 +1,6 @@
 # 0011. `:sw-hide`: ワークスペースを `SW_HIDE` で隠す opt-in モード
 
-- 状態: Proposed（2026-11-02。Opus レビュー待ち。実機は未検証）
+- 状態: Proposed（改訂 2、2026-11-02。Opus レビュー 1 回目の Med 6・Low 6 を反映。2 回目の確認待ち。実機は未検証）
 - 日付: 2026-11-02
 
 ## Context
@@ -68,3 +68,31 @@ ADR 0006 は `:sw-hide` を「将来の opt-in。採るなら、**終了時の�
 ## Consequences
 - 良い点: 他のワークスペースの窓がタスクバー・Alt-Tab から消える。`:park` の「そこから選ぶと戻される」摩擦が無くなる。
 - 悪い点: 窓を失うリスク（永続化と回復で緩和するが、ゼロではない）、Electron などで不安定な可能性、Jwno の木との整合（purge と入り直し）の複雑さ。opt-in で、README に注意を書く。
+
+
+## 改訂 2（2026-11-02。Opus レビュー A11-M1〜M6・L1〜L6 を反映。上の D-1〜D-6 と食い違う点はここが優先）
+
+**前提の訂正: jw32 に無い API**（`jw32` の C ソースで確認）: `ShowWindowAsync`、`MoveFileEx`、`GetProcessTimes`、`OpenProcess`、`ITaskbarList`（`DeleteTab`／`AddTab`）。あるもの: `ShowWindow`、`SetProp`／`GetProp`／`RemoveProp`、
+`GetWindowThreadProcessId`、`IsWindow`、`IsWindowVisible`、`SetWindowPos`、`PostMessage`／`SendMessage`、`CoCreateInstance`（COM のインタフェース定義は `IVirtualDesktopManager` だけ）。以下はこの範囲で決める。
+
+- **段階 0（先にやる）: park ＋ `ITaskbarList::DeleteTab` のスパイク（Opus の推奨）**。動機が「タスクバーから消したい」だけなら、窓を可視のまま park し、タスクバーのボタンだけ消す案には、purge・入り直し・永続化・窓を失う経路がすべて無い。
+  Alt-Tab からは消えない。jw32 に `ITaskbarList` が無いので、Janet の `ffi`（COM の vtable 経由）か jw32 への追加が要る。**この ADR の実装は、段階 0 の結果を見て範囲を決める**:
+  `DeleteTab` が他プロセスの窓に効き、動機を満たすなら、`:sw-hide` は「Alt-Tab からも消したい」人向けの第 2 段として後回しにする。
+- **A11-M1/M3 入り直しはポートの外で、表示中の記録を残す**: `:show` は `SW_SHOWNA`（同期の `ShowWindow`）と `transform-hwnd` だけを行い、**`window-opened` を呼ばない**。記録は `{:state :showing}` に変え、
+  `enumerate` に合成し続ける。ポーリング（ポートの外、spawn した fiber）が、Jwno の木に入っていない `:showing` の窓に `(:window-opened wm hwnd)` を試み、入ったら（`find-hwnd` が真）最大化し直し、記録を消す。
+  `:place`／`:focus` が木に無い窓に当たったら、`transform-hwnd`／`set-focus-to-hwnd`（木を引かない）で動く。SW-6: 入り直しが確認されるまで記録を残す。
+- **A11-M2 `enumerate` の重複と仮想デスクトップ**: `sw-hidden`（`:hidden`／`:showing`）にある id は、Jwno の木側の項目を**捨て**、合成した項目だけを出す（SW-5: 同じ id を 1 回だけ、可視の facts で）。
+  合成の facts は、保存した `extras`（class／title）を引き継ぐ（フロートのルールが効く）。合成は `on-current-desktop?` が真の窓に限る。隠した窓に対して答えない場合に備え、記録に隠した時点のデスクトップ ID を持つ（未確認）。
+- **A11-M4 永続化**: 主手段を **`SetProp(hwnd, "jwno-xtile.hidden", rect の符号化)`** にする。印は窓に付くので、ファイルの破損・hwnd の再利用（新しい窓に印は無い）・別のマシンの記録に強い。
+  起動時の回復は `EnumWindows` 相当（UIA の最上位の列挙。他のデスクトップの窓も含めて走査できるか未確認）で、印があり不可視の窓を戻して `RemoveProp` する。**補助として**ファイル
+  `%LOCALAPPDATA%\jwno-xtile\sw-hidden-{a,b}.jdn` を世代つきの 2 ファイル（a／b を交互に書き、世代番号の大きい有効な方を読む。`MoveFileEx` が無いので置き換えはしない）。壊れた世代は捨てて古い世代を読む。
+  両方壊れていたら窓には触らず、ログの error と起動時のツールチップで知らせる。プロセス ID に加えて印で照合する。**Jwno 無しの回復**: README に、印の付いた不可視の窓を戻す PowerShell を置く。
+- **A11-M5 前面として再表示された窓**: `sw-hidden` の窓に `focus-changed` が来たら（前面になった）、ユーザーの意思とみなし、**`:reclaim-focus` より先に** `[:window-surfaced id]` を流す
+  （アダプタが `focus-changed` を dispatch する前に判定）。前面にならずに再表示された窓だけを「アプリの再表示」として、`:park` の再 park と同じ上限で隠し直す。
+- **A11-M6 応答しない窓と UWP**: `ShowWindowAsync` は無いので、`ShowWindow` の前に応答の確認（`hung?` が使えれば）を行い、応答しない窓は後回し（`later`）にする。**窓ごとに park へ戻す一覧**を持つ:
+  既定は UWP（`ApplicationFrameWindow` のクラス。`extras` の class で判定）、ユーザーが exe／class を追加できる（`:sw-hide-exceptions`）。例外の窓は `:sw-hide` のモードでも `:park` で隠す。
+- **L1** 終了時の全表示は `SW_SHOWNA`＋`transform-hwnd` だけ（`window-opened` は呼ばない。Jwno は `:shutting-down` の前に UI スレッドを止めるので、sink の破棄が失敗するのは無害）。
+  **L2** `SW_HIDE`／`SW_SHOWNA` のたびにタスクバーのボタンの並びが変わりうる（Consequences に書く）。**L3** Jwno は単一インスタンス（`check-single-instance`）なので記録の取り合いは無い。
+  **L4** 隠した窓を表示したときに現れる仮想デスクトップ（隠したときか、現在か）は未確認。契約テストに入れる。**L5** owned 窓は所有者が隠れても残る（`:park` と同じ。所有者がタスクバーに無いので分かりにくい）。
+  **L6** テスト: クラッシュの注入（印の付与前後・`SW_HIDE` の前後・`:show` の各段階）、Jwno の purge の遅れと UIA の遅れをフェイクに入れる、SW-4（先行書き込み: 不可視にした窓の集合 ⊆ 印とファイル）・SW-5・SW-6、
+  park モードの既存テストが `:hide-mode` 既定のまま全て通ること。
