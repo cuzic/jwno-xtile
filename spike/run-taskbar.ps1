@@ -41,11 +41,12 @@ function TaskbarButtons($needle) {
   if ($h -eq [IntPtr]::Zero) { return $null }
   $root = [System.Windows.Automation.AutomationElement]::FromHandle($h)
   $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-  @($all | Where-Object { $_.Current.Name -like "*$needle*" } | ForEach-Object { $_.Current.Name })
+  ,@($all | Where-Object { $_.Current.Name -like "*$needle*" } | ForEach-Object { $_.Current.Name })
 }
 
 $np = Start-Process notepad -PassThru
-Start-Sleep 3
+[void](WaitFor { [T]::FindWindow("Notepad", $null) -ne [IntPtr]::Zero } 12)
+Start-Sleep 2
 $nph = [T]::FindWindow("Notepad", $null)
 $tray = [T]::FindWindow("Shell_TrayWnd", $null)
 Check "TB-0" "INFO" "a taskbar exists in this session; the test window (Notepad) exists" ("Shell_TrayWnd=$($tray -ne [IntPtr]::Zero) notepad=$($nph -ne [IntPtr]::Zero)")

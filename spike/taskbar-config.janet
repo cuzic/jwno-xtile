@@ -2,6 +2,7 @@
 # called through Janet's FFI from Jwno's main thread (COM is already initialised there)? Measurements only.
 # Run by spike/run-taskbar.ps1 (hotkeys: Alt+Shift+F7 = DeleteTab, F6 = AddTab, F5 = find the window).
 (use jw32/_winuser)
+(use jw32/_util)
 (import jwno/util)
 
 (def out-path (or (os/getenv "TB_OUT") "taskbar.log"))
