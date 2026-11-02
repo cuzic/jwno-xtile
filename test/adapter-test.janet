@@ -986,3 +986,18 @@
   (put (w :refuse) 4 true)                                         # the app refuses to move
   ((get (a :ctx) :hide) 4)
   (is (find |(string/find "still on screen" ($ 1)) (w :logs))))
+
+(deftest "Opus M2: after a virtual-desktop switch (before the poll notices) a focus on a window of the other desktop is refused"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put w :desktop g1)                                               # we are on desktop 1, window 4 is there
+  (array/clear (w :calls))
+  ((get (a :ctx) :focus) 4)
+  (is= 1 (length (calls-of w :window-set-focus)))
+  (put w :desktop g2)                                               # the user switched; no poll yet
+  (array/clear (w :calls))
+  (is (not (first (protect ((get (a :ctx) :focus) 4)))))
+  (is (not (first (protect ((get (a :ctx) :place) 4 {:x 0 :y 0 :w 10 :h 10})))))
+  (is= 0 (length (calls-of w :window-set-focus)))
+  (is= 0 (length (calls-of w :transform))))

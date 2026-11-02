@@ -83,24 +83,28 @@
           (put num->hwnd n root)
           n))))
 
-  (defn window-of [id]
-    (def hwnd (get num->hwnd id))
-    (unless hwnd (errorf "unknown window id %q" id))
-    (def win (:find-hwnd wm hwnd))
-    (unless win (errorf "window %q is not managed by Jwno" id))
-    win)
-
-  # ---- virtual desktops: only the current one is managed (ADR 0006 D-4) -------------------
-  (defn desktops [&opt refresh]
-    (def [ok ds] (protect (:get-all-desktops vd-man refresh)))
-    (if ok ds @[]))
-
   (defn on-current-desktop?
     "A window on another Windows virtual desktop is not ours. We ask Windows itself, per window:
     Jwno's `last-vd` is not comparable to a window's desktop id at start (contract test CT-3)."
     [hwnd]
     (def [ok here] (protect (w :on-current-desktop? hwnd)))
     (or (not ok) here))
+
+  (defn window-of [id]
+    (def hwnd (get num->hwnd id))
+    (unless hwnd (errorf "unknown window id %q" id))
+    (def win (:find-hwnd wm hwnd))
+    (unless win (errorf "window %q is not managed by Jwno" id))
+    # Opus M2: `num->hwnd` is only as fresh as the last poll. If the user has switched Windows virtual
+    # desktops since, a focus on this window would make Windows switch BACK (an implicit desktop switch),
+    # and a move would act on a window of another desktop: refuse; the runtime's recovery re-observes.
+    (unless (on-current-desktop? hwnd) (errorf "window %q is on another virtual desktop" id))
+    win)
+
+  # ---- virtual desktops: only the current one is managed (ADR 0006 D-4) -------------------
+  (defn desktops [&opt refresh]
+    (def [ok ds] (protect (:get-all-desktops vd-man refresh)))
+    (if ok ds @[]))
 
   # ---- parking: a window of another workspace is moved off-screen and remembered ----------
   (def parked @{})   # id -> {:rect where it was :at where we put it}; OS-boundary memory, not WM state
