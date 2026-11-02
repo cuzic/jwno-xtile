@@ -21,6 +21,19 @@ public static class S {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int hh, uint f);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RC r);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+  [StructLayout(LayoutKind.Sequential)] public struct RC { public int L, T, R, B; }
+  public static string Cls(IntPtr h) { var c = new System.Text.StringBuilder(100); GetClassName(h, c, 100); return c.ToString(); }
+  public static bool Front(IntPtr h) {
+    uint pid; uint t1 = GetWindowThreadProcessId(GetForegroundWindow(), out pid); uint t2 = GetCurrentThreadId();
+    bool att = t1 != 0 && t1 != t2 && AttachThreadInput(t2, t1, true);
+    SetForegroundWindow(h);
+    if (att) AttachThreadInput(t2, t1, false);
+    return GetForegroundWindow() == h; }
 }
 "@
 function Check($id, $status, $what, $detail) {
@@ -67,6 +80,17 @@ if ($line -and $line -match 'sink-created (\d+)') {
   $got = WaitFor { [S]::GetForegroundWindow() -eq $h } 6
   Check "SK-3" ($(if ($got) { "PASS" } else { "FAIL" })) "Jwno's own process can make the sink the foreground window" ("repl=$out; log: " + ((LogLines | Where-Object { $_ -match 'sink-front' }) -join " | "))
   if (-not $got) {
+    $rc = New-Object S+RC; [void][S]::GetWindowRect($h, [ref]$rc)
+    Check "SK-3a" "INFO" "state of the sink after the failed fronting" ("visible=$([S]::IsWindowVisible($h)) rect=$($rc.L),$($rc.T),$($rc.R),$($rc.B) foreground=0x{0:X} class={1}" -f [S]::GetForegroundWindow().ToInt64(), [S]::Cls([S]::GetForegroundWindow()))
+    # is it the off-screen position, the size, or the tool-window style? try them one by one
+    [void][S]::SetWindowPos($h, [IntPtr]::Zero, 40, 40, 1, 1, 0x0014)          # on screen, 1x1, no activate
+    Check "SK-3c" "INFO" "fronted when moved on screen (1x1 at 40,40)" ([S]::Front($h))
+    [void][S]::SetWindowPos($h, [IntPtr]::Zero, 40, 40, 200, 100, 0x0014)
+    Check "SK-3d" "INFO" "fronted when 200x100 on screen" ([S]::Front($h))
+    [void][S]::ShowWindow($h, 5)                                              # SW_SHOW (activating)
+    Check "SK-3e" "INFO" "fronted after ShowWindow(SW_SHOW)" ([S]::Front($h))
+    [void][S]::SetWindowPos($h, [IntPtr]::Zero, -32000, -32000, 1, 1, 0x0014)
+    Check "SK-3f" "INFO" "fronted when moved back to -32000,-32000 (1x1)" ([S]::Front($h))
     # what the adapter would have to do: the same AttachThreadInput trick as the harness
     [uint32]$p0 = 0
     $t1 = [S]::GetWindowThreadProcessId([S]::GetForegroundWindow(), [ref]$p0); $t2 = [S]::GetCurrentThreadId()
