@@ -131,11 +131,11 @@
                (if (and p (p :vd)) [true (p :vd)] res))
              res))))
 
-  (defn tab-delete [hwnd]
-    "ADR 0011 stage 0: take the taskbar button of a parked window away (best effort)."
+  (defn tab-delete [hwnd &opt quiet]
+    "ADR 0011 stage 0: take the taskbar button of a parked window away (best effort). `quiet` for the poll's repeat."
     (when (and hide-tab? (get win32 :taskbar-delete-tab))
       (def r (protect ((get win32 :taskbar-delete-tab) hwnd)))
-      (log-fn :debug (string/format "taskbar-delete hwnd=%q -> %q" hwnd (r 1)))))
+      (unless quiet (log-fn :debug (string/format "taskbar-delete hwnd=%q -> %q" hwnd (r 1))))))
   (defn tab-add [hwnd]
     (when (and hide-tab? (get win32 :taskbar-add-tab))
       (def r (protect ((get win32 :taskbar-add-tab) hwnd)))
@@ -288,7 +288,6 @@
       (if ok
         (when entry (array/push out entry))
         (log-fn :warn (string "enumerate: skipped a window (step " step ", hwnd " (in win :hwnd) "): " entry))))
-    (log-fn :debug (string/format "enumerate: %d in Jwno's tree, %d reported (parked: %d)" (length (:get-window-stack (in wm :root))) (length out) (length parked)))
     # replace, do not accumulate: windows whose :window-removed never came must not pile up
     (table/clear num->hwnd)
     (eachp [k v] fresh (put num->hwnd k v))
@@ -557,7 +556,7 @@
 
   (defn poll-once []
     # ADR 0011 stage 0: Explorer can put a button back (it restarts, or re-adds one): ask again, it is cheap
-    (when hide-tab? (eachp [_ p] parked (unless (p :pending) (tab-delete (p :hwnd)))))
+    (when hide-tab? (eachp [_ p] parked (unless (p :pending) (tab-delete (p :hwnd) true))))
     (pump-tick)      # drops that are waiting must reach the core BEFORE the comparison below (N2)
     (pin-all!)
     (dispatch! [:windows-observed (enumerate)])
