@@ -125,11 +125,21 @@
     (os/rm path)
     true))
 (ev/spawn
+  (var beats 0)
   (forever
     (ev/sleep 0.3)
+    (++ beats)
+    (when (zero? (% beats 20)) (rec :heartbeat beats))
     (when (flag? "front.flag")
       (rec :flag :front)
-      (def r (try (:send-message ui-man (msgs :front) 0 0) ([e] (rec :front-error (string e)) nil)))
+      # Jwno's own way to take the focus is UIA SetFocus (it gets past the foreground lock, which
+      # SetForegroundWindow from the UI thread did not): done on the MAIN thread, where the UIA objects live
+      (def r (try
+               (let [h (FindWindowEx nil nil "xtile-sink-spike" nil)]
+                 (rec :sink-found (if (null? h) :null (util/pointer-to-number h)))
+                 (unless (null? h) (:set-focus-to-hwnd (in jwno/context :window-manager) h))
+                 :uia-set-focus-called)
+               ([e] (rec :front-error (string e)) nil)))
       (rec :front-result r))
     (when (flag? "destroy.flag")
       (rec :flag :destroy)
