@@ -260,6 +260,51 @@
                (when (ids :destroy) (:send-message ui-man (ids :destroy) 0 0))
                (set hwnd-n nil))})
 
+# ---- the taskbar button of a parked window (ADR 0011 stage 0) ----------------------------------------
+# ITaskbarList::DeleteTab / AddTab through Janet's FFI (jw32 has no binding for it). Verified on a real Windows 11
+# desktop (screenshots): DeleteTab hides the button of another process's window, it stays hidden after the window is
+# activated / retitled / flashed, AddTab brings it back. COM is used on the main thread only. Any failure -> nil:
+# the button just stays (a parked window is still parked).
+(def- tb-state @{})
+
+(defn- ffi* [name] (get-in root-env [(symbol name) :value]))
+
+(defn- guid-buffer [d1 d2 d3 bytes]
+  (def b (buffer/new-filled 16 0))
+  (def le (fn [n w] (seq [i :range [0 w]] (band (brshift n (* 8 i)) 0xFF))))
+  (var o 0)
+  (each x [;(le d1 4) ;(le d2 2) ;(le d3 2) ;bytes] (put b o x) (++ o))
+  b)
+
+(defn- taskbar-init
+  "The ITaskbarList object (made once), or nil."
+  []
+  (or (tb-state :tbl)
+      (let [native (ffi* "ffi/native") lookup (ffi* "ffi/lookup") call (ffi* "ffi/call")
+            sig (ffi* "ffi/signature") rd (ffi* "ffi/read")]
+        (when (and native lookup call sig rd)
+          (let [clsid (guid-buffer 0x56FDF344 0xFD6D 0x11D0 [0x95 0x8A 0x00 0x60 0x97 0xC9 0xA0 0x90])
+                iid (guid-buffer 0x56FDF342 0xFD6D 0x11D0 [0x95 0x8A 0x00 0x60 0x97 0xC9 0xA0 0x90])
+                cci (lookup (native "ole32.dll") "CoCreateInstance")
+                out (buffer/new-filled 8 0)
+                hr (call cci (sig :default :int :ptr :ptr :uint :ptr :ptr) clsid nil 1 iid out)]
+            (when (zero? hr)
+              (let [tbl (rd :ptr out) vtbl (rd :ptr tbl)]
+                (call (rd :ptr vtbl 24) (sig :default :int :ptr) tbl)      # HrInit (vtable slot 3)
+                (put tb-state :tbl tbl)
+                (put tb-state :vtbl vtbl)
+                tbl)))))))
+
+(defn- taskbar-call [slot hwnd]
+  (guarded nil
+           (fn []
+             (when-let [tbl (taskbar-init)]
+               ((ffi* "ffi/call") ((ffi* "ffi/read") :ptr (tb-state :vtbl) (* 8 slot))
+                                  ((ffi* "ffi/signature") :default :int :ptr :ptr) tbl hwnd)))))
+
+(defn taskbar-delete-tab "HRESULT (0 = S_OK) or nil" [hwnd] (taskbar-call 5 hwnd))
+(defn taskbar-add-tab "HRESULT (0 = S_OK) or nil" [hwnd] (taskbar-call 4 hwnd))
+
 (defn maximize
   "ShowWindow(SW_MAXIMIZE). Jwno's transform (the park) un-maximises a window; this puts it back."
   [hwnd]
@@ -274,7 +319,9 @@
                    {:left (in rect :left) :top (in rect :top) :right (in rect :right) :bottom (in rect :bottom)}))))
 
 (def win32
-  {:make-focus-sink make-focus-sink
+  {:taskbar-delete-tab taskbar-delete-tab
+   :taskbar-add-tab taskbar-add-tab
+   :make-focus-sink make-focus-sink
    :maximize maximize
    :window-rect window-rect
    :foreground-hwnd foreground-hwnd

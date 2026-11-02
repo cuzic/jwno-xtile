@@ -62,6 +62,7 @@
   (def later (get opts :later (fn [d f] (ev/spawn (ev/sleep d) (f)))))
   (def poll-seconds (get opts :poll-seconds 2))
   (def clock (get opts :clock os/clock))
+  (def hide-tab? (get opts :hide-taskbar-button false))   # ADR 0011 stage 0: a parked window loses its taskbar button
   (def swp (get win32 :swp-nomove-nosize))
   (def w (fn [name & args]
            (def f (get win32 name))
@@ -112,6 +113,17 @@
   (def parked @{})   # id -> {:rect where it was :at where we put it ...}; OS-boundary memory, not WM state
   (def gave-up @{})  # ids we stopped parking after `repark-limit` tries; cleared by a place/show or the window's end
 
+  (defn tab-delete [hwnd]
+    "ADR 0011 stage 0: take the taskbar button of a parked window away (best effort)."
+    (when (and hide-tab? (get win32 :taskbar-delete-tab))
+      (def r (protect ((get win32 :taskbar-delete-tab) hwnd)))
+      (log-fn :debug (string/format "taskbar-delete hwnd=%q -> %q" hwnd (r 1)))))
+  (defn tab-add [hwnd]
+    (when (and hide-tab? (get win32 :taskbar-add-tab))
+      (def r (protect ((get win32 :taskbar-add-tab) hwnd)))
+      (log-fn :debug (string/format "taskbar-add hwnd=%q -> %q" hwnd (r 1)))))
+
+
   # ---- ports ------------------------------------------------------------------------------
   (defn work-area []
     (def [monitors main-idx] (:enumerate-monitors wm))
@@ -151,7 +163,8 @@
       (let [after (protect (visible-rect win))]
         (when (and (after 0) (> ((after 1) :x) (+ park-x 2000)))
           (log-fn :warn (string/format "hide: window %q is still on screen at %q after the park" id (after 1)))))
-      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed :reparks (if prev (get prev :reparks 0) 0)})))))
+      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed :reparks (if prev (get prev :reparks 0) 0)})
+      (tab-delete hwnd)))))
 
   (defn unpark
     "Put a parked window back where it was (a tile is placed again right after; a float stays there).
@@ -170,6 +183,7 @@
             (move-to win (p :rect))
             (:transform-hwnd wm hwnd (rect->jwno (p :rect)) @{:swp-flags 0}))
           (when (and (p :zoomed) (get win32 :maximize)) ((get win32 :maximize) hwnd))
+          (tab-add hwnd)
           (put parked id nil)))))
 
   # ---- the sink window (ADR 0006 D-7b): holds the OS focus when the visible workspace is empty ----
@@ -215,6 +229,7 @@
                         :w (min (- (r :right) (r :left)) (wa :w)) :h (min (- (r :bottom) (r :top)) (wa :h))})))))
 
   (defn place [id rect]
+    (when-let [p (get parked id)] (unless (p :pending) (tab-add (p :hwnd))))   # placed again: it is a window of the screen
     (put parked id nil)         # being placed supersedes being parked
     (def win (window-of id))
     (:transform win (rect->jwno rect) @{:swp-flags 0} wm)
@@ -503,6 +518,7 @@
                             # given up for the window's life (a :refresh, a goto, a place do not start the fight
                             # again); the core is told, so it moves the window to the workspace we look at
                             (put gave-up id true)
+                            (tab-add (p :hwnd))
                             (put parked id nil)
                             (spawn (fn [] (dispatch! [:window-surfaced id]))))
                         (do (log-fn :debug (string/format "re-parking id=%q found at %q (try %d)" id rect (+ n 1)))
@@ -516,6 +532,8 @@
         (unless ok (log-fn :warn (string "compare " id ": " err))))))
 
   (defn poll-once []
+    # ADR 0011 stage 0: Explorer can put a button back (it restarts, or re-adds one): ask again, it is cheap
+    (when hide-tab? (eachp [_ p] parked (unless (p :pending) (tab-delete (p :hwnd)))))
     (pump-tick)      # drops that are waiting must reach the core BEFORE the comparison below (N2)
     (pin-all!)
     (dispatch! [:windows-observed (enumerate)])

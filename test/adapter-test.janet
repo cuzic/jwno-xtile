@@ -96,6 +96,8 @@
         :minimized? (fn [h] (truthy? (get (w :minimized) (h :ptr))))
         :hung? (fn [h] (truthy? (get (w :hung) (h :ptr))))
         :window-rect (fn [h] (get (w :rects) (h :ptr)))
+        :taskbar-delete-tab (fn [h] (rec :tab-delete (h :ptr)) 0)
+        :taskbar-add-tab (fn [h] (rec :tab-add (h :ptr)) 0)
         :maximize (fn [h] (rec :maximize (h :ptr)) true)
         :beep (fn [] (rec :beep))
         :zoomed? (fn [h] (truthy? (get (w :zoomed) (h :ptr))))
@@ -1055,3 +1057,39 @@
   (surface! 4) ((a :poll-once)) (flush! w)
   (is (get (a :parked) 4))
   (is (< ((rect-of w 4) :left) -30000)))
+
+(deftest "ADR 0011 stage 0: with :hide-taskbar-button a parked window loses its taskbar button and gets it back; off by default"
+  (def w (fake-world))
+  (def a (install-adapter w))                                        # option off
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a :ctx) :hide) 4) ((get (a :ctx) :show) 4)
+  (is= 0 (length (calls-of w :tab-delete)))
+  (is= 0 (length (calls-of w :tab-add)))
+  (def w2 (fake-world))
+  (def a2 (install-adapter w2 {:hide-taskbar-button true}))
+  (managed-window w2 a2 4)
+  (put (w2 :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((get (a2 :ctx) :hide) 4)
+  (is= 1 (length (calls-of w2 :tab-delete)))
+  # the poll asks again (Explorer may have put the button back)
+  ((a2 :poll-once))
+  (is (>= (length (calls-of w2 :tab-delete)) 2))
+  ((get (a2 :ctx) :show) 4)
+  (is= 1 (length (calls-of w2 :tab-add)))
+  # a window that is placed again (not through :show) also gets it back
+  ((get (a2 :ctx) :hide) 4)
+  ((get (a2 :ctx) :place) 4 {:x 0 :y 0 :w 100 :h 100})
+  (is= 2 (length (calls-of w2 :tab-add)))
+  # shutting down brings every button back
+  ((get (a2 :ctx) :hide) 4)
+  ((a2 :stop))
+  (is= 3 (length (calls-of w2 :tab-add))))
+
+(deftest "ADR 0011 stage 0: a minimised window (not moved) gets no DeleteTab"
+  (def w (fake-world))
+  (def a (install-adapter w {:hide-taskbar-button true}))
+  (managed-window w a 4)
+  (put (w :minimized) 4 true)
+  ((get (a :ctx) :hide) 4)
+  (is= 0 (length (calls-of w :tab-delete))))

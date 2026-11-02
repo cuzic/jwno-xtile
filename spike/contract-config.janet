@@ -73,7 +73,8 @@
                   {:log xlog
                    :keymap keymap
                    :bindings (default-bindings "Alt" default-tags)
-                   :poll-seconds 2}))
+                   :poll-seconds 2
+                   :hide-taskbar-button true}))
     ([e f]
      (rec :install-error (string e))
      (debug/stacktrace f e ""))))

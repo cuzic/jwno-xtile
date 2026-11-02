@@ -374,6 +374,18 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-23c" ($(if ($back1) { "PASS" } else { "FAIL" })) "goto 1 brings the windows back after the sink was used" ("frame=" + ((Frame ([IntPtr]::new([int64]$i0))) -join ","))
   Start-Sleep 2
 
+  # ---- the taskbar button of a parked window (ADR 0011 stage 0): the calls go through and report S_OK ----
+  [void](Cmd ":xtile :goto 6")
+  Start-Sleep 3
+  $tdel = @(LogLines | Where-Object { $_ -match 'taskbar-delete hwnd=.* -> 0' })
+  $tfail = @(LogLines | Where-Object { $_ -match 'taskbar-delete hwnd=.* -> (nil|-)' })
+  Check "CT-24a" ($(if ($tdel.Count -gt 0) { "PASS" } else { "FAIL" })) "a parked window's taskbar button is taken away through ITaskbarList (DeleteTab returned S_OK)" ("ok=" + $tdel.Count + " failed=" + $tfail.Count)
+  [void](Cmd ":xtile :goto 1")
+  [void](WaitFor { -not (Parked $i0) } 8)
+  $tadd = @(LogLines | Where-Object { $_ -match 'taskbar-add hwnd=.* -> 0' })
+  Check "CT-24b" ($(if ($tadd.Count -gt 0) { "PASS" } else { "FAIL" })) "... and given back when the window returns (AddTab returned S_OK)" ("ok=" + $tadd.Count)
+  Start-Sleep 2
+
   # ---- virtual desktops (ADR 0006 D-4): only the current Windows desktop is managed ----
   Focus $h2; Start-Sleep 1
   Chord 0x44   # Win+Ctrl+D: new desktop 2, switch to it
