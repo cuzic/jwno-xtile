@@ -79,7 +79,7 @@
         (ShowWindow h SW_MINIMIZE) (ShowWindow h SW_RESTORE) (SetForegroundWindow h)
         (set ok (fg?)) (rec :sink-front :min-restore ok))
       (unless ok
-        (alt-tap) (ShowWindow h SW_SHOW) (BringWindowToTop h) (SetForegroundWindow h)
+        (alt-tap) (ShowWindow h SW_SHOW) (SetWindowPos h HWND_TOP 0 0 0 0 (bor SWP_NOMOVE SWP_NOSIZE)) (SetForegroundWindow h)
         (set ok (fg?)) (rec :sink-front :alt-show-top ok))
       (if ok 1 0))))
 

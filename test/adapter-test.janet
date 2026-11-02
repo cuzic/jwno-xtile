@@ -604,8 +604,14 @@
   (put (w :minimized) 4 true)
   (array/clear (w :calls))
   ((get (a :ctx) :hide) 4)
-  (is= 0 (length (calls-of w :transform)))
-  (is (nil? (get (a :parked) 4))))
+  (is= 0 (length (calls-of w :transform)))                          # not moved ...
+  (is (get-in (a :parked) [4 :pending]))                            # ... but it owes a park: the poll does it on restore
+  # restored while its workspace is hidden: the poll parks it
+  (put (w :minimized) 4 nil)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  ((a :poll-once))
+  (is (< ((rect-of w 4) :left) -30000))
+  (is (not (get-in (a :parked) [4 :pending]))))
 
 (deftest "ADR 0006: the poll parks a window again if an app moved itself back on-screen, without telling the core"
   (def w (fake-world))
@@ -842,3 +848,71 @@
   (array/clear (w :calls))
   ((get (a :ctx) :show) 5)
   (is= 0 (length (calls-of w :maximize))))
+
+# ---- P-1 (ADR 0006 rev.4, D-6): after the timers have run, what the core shows is on screen and the rest is parked -----
+
+(defn- drain! [w]
+  (for _ 0 6
+    (flush! w)
+    (def ts (array ;(w :later)))
+    (array/clear (w :later))
+    (each [_ f] ts (f))
+    (flush! w)))
+
+(defn- check-p1 [w a ctx-msg]
+  (def s (state-of a))
+  (each win (values (w :windows))
+    (def n ((win :hwnd) :ptr))
+    (def tag (st/locate s n))
+    (when (and tag (not (get (w :minimized) n)))
+      (def r (get (w :rects) n))
+      (def off? (and r (< (r :left) -30000)))
+      (if (= tag (s :current))
+        (when off? (errorf "P-1 window %q is in the visible workspace %q but off-screen (%s)" n tag ctx-msg))
+        (unless off? (errorf "P-1 window %q is on hidden workspace %q but on screen at %q (%s)" n tag r ctx-msg))))))
+
+(deftest "P-1: random goto/send/close/minimise/restore/poll sequences keep the visible workspace on screen and the rest parked"
+  (for seed 0 40
+    (def rng (math/rng seed))
+    (def w (fake-world))
+    (def a (install-adapter w))
+    (def tags ["1" "2" "3"])
+    (var next-id 1)
+    (def log @[])
+    (for step 0 40
+      (def alive (sort (array ;(keys (w :windows)))))
+      (def op (math/rng-int rng 9))
+      (case op
+        0 (when (< (length alive) 6)
+            (def n next-id) (++ next-id)
+            (put (w :rects) n {:left 10 :top 10 :right 310 :bottom 310})
+            (managed-window w a n)
+            (array/push log [:open n]))
+        1 (let [t (get tags (math/rng-int rng 3))]
+            (rt/dispatch (a :rt) [:command :goto t]) (array/push log [:goto t]))
+        2 (let [t (get tags (math/rng-int rng 3))]
+            (rt/dispatch (a :rt) [:command :send t]) (array/push log [:send t]))
+        3 (when (not (empty? alive))
+            (def n (get alive (math/rng-int rng (length alive))))
+            (def win ((w :windows) n))
+            ((get (w :hooks) :window-removed) win)
+            (put (w :windows) n nil)
+            (put w :order (filter |(not= $ n) (w :order)))
+            (put (w :rects) n nil)
+            (array/push log [:close n]))
+        4 (when (not (empty? alive))
+            (def n (get alive (math/rng-int rng (length alive))))
+            (put (w :minimized) n true) (array/push log [:minimize n]))
+        5 (when (not (empty? alive))
+            # restoring a minimised window: Windows puts it where it was, which may be the park
+            (def n (get alive (math/rng-int rng (length alive))))
+            (put (w :minimized) n nil) (array/push log [:restore n]))
+        6 (array/push log [:poll])
+        7 (when (not (empty? alive))
+            (def n (get alive (math/rng-int rng (length alive))))
+            (rt/dispatch (a :rt) [:focus-changed n]) (array/push log [:focus n]))
+        (array/push log [:refresh]))
+      (when (index-of op [6 0 3 4 5 7]) ((a :poll-once)))
+      (when (= op 8) (rt/dispatch (a :rt) [:command :refresh]))
+      (drain! w)
+      (check-p1 w a (string/format "seed %d step %d ops %q" seed step log)))))

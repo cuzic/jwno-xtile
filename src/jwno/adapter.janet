@@ -123,14 +123,18 @@
     [id]
     (def win (window-of id))
     (def hwnd (get num->hwnd id))
-    (unless (w :minimized? hwnd)
-      (def prev (get parked id))
+    (if (w :minimized? hwnd)
+      # not moved now (a minimised window has no real position); remember that it owes a park, so the poll
+      # parks it as soon as it is restored (P-1: a restored window of a hidden workspace must not appear)
+      (unless (get parked id) (put parked id {:pending true :hwnd hwnd}))
+    (do
+      (def prev (let [p (get parked id)] (when (and p (not (p :pending))) p)))
       (def rect (if prev (prev :rect) (visible-rect win)))
       # Opus/J3: Jwno's transform un-maximises a window; remember it was maximised and maximise it again on return
       (def zoomed (if prev (prev :zoomed) (w :zoomed? hwnd)))
       (def at {:x park-x :y park-y :w (rect :w) :h (rect :h)})
       (move-to win at)
-      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed})))
+      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed}))))
 
   (defn unpark
     "Put a parked window back where it was (a tile is placed again right after; a float stays there).
@@ -141,8 +145,8 @@
     (when-let [p (get parked id)]
       (def hwnd (or (get num->hwnd id) (p :hwnd)))
       (cond
-        (or (nil? hwnd) (nil? (w :root-of hwnd)))
-        (put parked id nil)                       # the window is gone: nothing to bring back
+        (or (nil? hwnd) (nil? (w :root-of hwnd)) (p :pending))
+        (put parked id nil)                       # gone, or never moved (it was minimised): nothing to bring back
         true
         (do
           (if-let [win (and (get num->hwnd id) (:find-hwnd wm hwnd))]
@@ -431,10 +435,14 @@
               (when (and win (not (w :minimized? hwnd)) (not (w :hung? hwnd)))
                 (def rect (visible-rect win))
                 (if-let [p (get parked id)]
-                  # ours to keep parked: an app that moved itself back on-screen is parked again
-                  (when (> (rect :x) (+ park-x 2000))
-                    (log-fn :debug (string/format "re-parking id=%q found at %q" id rect))
-                    (move-to win (p :at)))
+                  (if (p :pending)
+                    # it was minimised when its workspace was hidden and is on screen now: park it
+                    (do (log-fn :debug (string/format "parking id=%q: restored from minimised on a hidden workspace" id))
+                        (hide id))
+                    # ours to keep parked: an app that moved itself back on-screen is parked again
+                    (when (> (rect :x) (+ park-x 2000))
+                      (log-fn :debug (string/format "re-parking id=%q found at %q" id rect))
+                      (move-to win (p :at))))
                 (if (w :zoomed? hwnd)
                   (do
                     (log-fn :debug (string/format "compare: id=%q is maximised, rect=%q: floating it" id rect))
