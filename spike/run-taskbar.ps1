@@ -7,11 +7,14 @@ $Out = (Resolve-Path $Out).Path
 $log = Join-Path $Out "taskbar.log"
 Remove-Item $log -ErrorAction SilentlyContinue
 $env:TB_OUT = $log
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
 public static class T {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string t);
   [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
@@ -27,6 +30,21 @@ public static class T {
     return found; }
 }
 "@
+[void][T]::SetProcessDPIAware()
+$ShotDir = Join-Path $Out "shots"
+# a picture of the taskbar strip (bottom of the primary screen, the taskbar plus a margin): the effect of DeleteTab is judged by looking
+function Shot($name) {
+  New-Item -ItemType Directory -Force -Path $ShotDir | Out-Null
+  $scr = [System.Windows.Forms.Screen]::PrimaryScreen
+  $b = $scr.Bounds; $wa = $scr.WorkingArea
+  $h = [Math]::Max($b.Bottom - $wa.Bottom, 0) + 24; if ($h -lt 100) { $h = 100 }
+  $w = [Math]::Min($b.Width, 1000); $x = $b.Left + [int](($b.Width - $w) / 2)
+  $bmp = New-Object System.Drawing.Bitmap($w, $h)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($x, $b.Bottom - $h, 0, 0, (New-Object System.Drawing.Size($w, $h)))
+  $bmp.Save((Join-Path $ShotDir "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+  $g.Dispose(); $bmp.Dispose()
+}
 $results = New-Object System.Collections.ArrayList
 function Check($id, $status, $what, $detail) {
   [void]$results.Add([pscustomobject]@{ id = $id; status = $status; what = $what; detail = "$detail" })
@@ -66,6 +84,7 @@ Start-Sleep 1
 $nph = [T]::ByTitle("XTILE-TB-SPIKE")
 $tray = [T]::FindWindow("Shell_TrayWnd", $null)
 Check "TB-0" "INFO" "a taskbar exists in this session; the test window (XTILE-TB-SPIKE) exists" ("Shell_TrayWnd=$($tray -ne [IntPtr]::Zero) testwindow=$($nph -ne [IntPtr]::Zero)")
+Start-Sleep 2; Shot "1-before"
 $before = TaskbarButtons "spike"
 Check "TB-1" "INFO" "taskbar buttons that mention Notepad before anything" ($(if ($null -eq $before) { "no taskbar" } else { "$($before.Count): " + ($before -join " | ") }))
 
@@ -78,25 +97,26 @@ if ($up) {
   AltShift 0x76                                         # Alt+Shift+F7: DeleteTab
   $called = WaitFor { (LogLines | Where-Object { $_ -match 'delete-tab|error|cocreate' }).Count -gt 1 } 6
   Check "TB-3" "INFO" "DeleteTab was called (HRESULTs: 0 = S_OK)" ((LogLines | Where-Object { $_ -match 'cocreate|hrinit|delete-tab|error|no-window' }) -join " | ")
-  Start-Sleep 2
+  Start-Sleep 2; Shot "2-after-DeleteTab"
   $after = TaskbarButtons "spike"
   Check "TB-4" "INFO" "taskbar buttons that mention Notepad after DeleteTab" ($(if ($null -eq $after) { "no taskbar" } else { "$($after.Count): " + ($after -join " | ") }))
   # does it stay removed? activate, retitle, flash
-  [void][T]::SetForegroundWindow($nph); Start-Sleep 2
+  [void][T]::SetForegroundWindow($nph); Start-Sleep 2; Shot "3-activated"
   $a1 = TaskbarButtons "spike"
   Check "TB-5a" "INFO" "after the window was activated" ($(if ($null -eq $a1) { "no taskbar" } else { "$($a1.Count)" }))
-  [void][T]::SendMessage($nph, 0x000C, [IntPtr]::Zero, "Renamed by the spike"); Start-Sleep 2
+  [void][T]::SendMessage($nph, 0x000C, [IntPtr]::Zero, "Renamed by the spike"); Start-Sleep 2; Shot "4-retitled"
   $a2 = TaskbarButtons "spike"
   Check "TB-5b" "INFO" "after its title changed" ($(if ($null -eq $a2) { "no taskbar" } else { "$($a2.Count): " + ($a2 -join " | ") }))
-  [void][T]::FlashWindow($nph, $true); Start-Sleep 2
+  [void][T]::FlashWindow($nph, $true); Start-Sleep 2; Shot "5-flashed"
   $a3 = TaskbarButtons "spike"
   Check "TB-5c" "INFO" "after FlashWindow" ($(if ($null -eq $a3) { "no taskbar" } else { "$($a3.Count)" }))
   AltShift 0x75                                         # Alt+Shift+F6: AddTab
-  Start-Sleep 2
+  Start-Sleep 2; Shot "6-AddTab"
   $back = TaskbarButtons "spike"
   Check "TB-6" "INFO" "after AddTab" ($(if ($null -eq $back) { "no taskbar" } else { "$($back.Count)" }))
 }
 Stop-Process -Id $np.Id -Force -ErrorAction SilentlyContinue
+Start-Sleep 2; Shot "7-closed"
 if ($j -and -not $j.HasExited) { Stop-Process -Id $j.Id -Force -ErrorAction SilentlyContinue }
 $results | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $Out "taskbar-results.json")
 $fail = @($results | Where-Object { $_.status -eq "FAIL" }).Count
