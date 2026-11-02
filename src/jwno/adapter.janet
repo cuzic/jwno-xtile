@@ -37,6 +37,7 @@
   "WM workspaces (ADR 0006). They are groups inside the WM, independent of Windows' virtual desktops."
   (tuple "1" "2" "3" "4" "5" "6" "7" "8" "9"))
 
+(def repark-limit 3)    # Opus M3: how often the poll parks the same window again before it gives up
 (def park-x -32000)
 (def park-y -32000)
 
@@ -134,7 +135,12 @@
       (def zoomed (if prev (prev :zoomed) (w :zoomed? hwnd)))
       (def at {:x park-x :y park-y :w (rect :w) :h (rect :h)})
       (move-to win at)
-      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed}))))
+      # Opus M6: Jwno swallows transform failures; read the result back. A window that stayed on screen is
+      # retried by the poll (bounded, see `repark-limit`)
+      (let [after (protect (visible-rect win))]
+        (when (and (after 0) (> ((after 1) :x) (+ park-x 2000)))
+          (log-fn :warn (string/format "hide: window %q is still on screen at %q after the park" id (after 1)))))
+      (put parked id {:rect rect :at at :hwnd hwnd :zoomed zoomed :reparks (if prev (get prev :reparks 0) 0)}))))
 
   (defn unpark
     "Put a parked window back where it was (a tile is placed again right after; a float stays there).
@@ -457,10 +463,17 @@
                     # it was minimised when its workspace was hidden and is on screen now: park it
                     (do (log-fn :debug (string/format "parking id=%q: restored from minimised on a hidden workspace" id))
                         (hide id))
-                    # ours to keep parked: an app that moved itself back on-screen is parked again
-                    (when (> (rect :x) (+ park-x 2000))
-                      (log-fn :debug (string/format "re-parking id=%q found at %q" id rect))
-                      (move-to win (p :at))))
+                    # ours to keep parked: an app that moved itself back on-screen is parked again -- but not
+                    # the window the user is working in, and not for ever (Opus M3): after `repark-limit`
+                    # tries the entry is dropped, so we stop fighting an app (or user) that wants it on screen
+                    (when (and (> (rect :x) (+ park-x 2000)) (not= id (foreground)))
+                      (def n (get p :reparks 0))
+                      (if (>= n repark-limit)
+                        (do (log-fn :warn (string/format "giving up parking id=%q: it came back %d times" id n))
+                            (put parked id nil))
+                        (do (log-fn :debug (string/format "re-parking id=%q found at %q (try %d)" id rect (+ n 1)))
+                            (move-to win (p :at))
+                            (put parked id (struct ;(kvs p) :reparks (+ n 1)))))))
                 (if (w :zoomed? hwnd)
                   (do
                     (log-fn :debug (string/format "compare: id=%q is maximised, rect=%q: floating it" id rect))

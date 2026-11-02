@@ -566,7 +566,7 @@
   (is= -32000 (r :left))
   (is= -32000 (r :top))
   (is= 300 (- (r :right) (r :left)))                                       # same size
-  (is= {:rect {:x 100 :y 50 :w 300 :h 300} :at {:x -32000 :y -32000 :w 300 :h 300} :hwnd {:ptr 4} :zoomed false} (get (a :parked) 4))
+  (is= {:rect {:x 100 :y 50 :w 300 :h 300} :at {:x -32000 :y -32000 :w 300 :h 300} :hwnd {:ptr 4} :zoomed false :reparks 0} (get (a :parked) 4))
   ((get (a :ctx) :show) 4)
   (is= {:left 100 :top 50 :right 400 :bottom 350} (rect-of w 4))
   (is (nil? (get (a :parked) 4)))
@@ -620,6 +620,7 @@
   (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
   ((get (a :ctx) :hide) 4)
   (put (w :rects) 4 {:left 640 :top 480 :right 940 :bottom 780})           # the app restored its saved position
+  (put w :fg nil)                                                          # (the window in front is never re-parked: Opus M3)
   (array/clear (w :calls))
   ((a :poll-once))
   (is (< ((rect-of w 4) :left) -30000))                                    # parked again
@@ -955,3 +956,33 @@
   (is (find |(string/find "did not get the foreground" ($ 1)) (w :logs)))
   ((a :stop))
   (is= 1 (length (calls-of w :sink-destroy))))
+
+(deftest "Opus M3: an app that keeps coming back is re-parked 3 times, then left alone; the window in front is never re-parked"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (managed-window w a 5)
+  (rt/dispatch (a :rt) [:command :goto "2"])                          # the core hides both: they are parked
+  (flush! w)
+  (is (get (a :parked) 4))
+  (defn surface! [n] (put (w :rects) n {:left 100 :top 50 :right 400 :bottom 350}))
+  (put w :fg nil)
+  (for i 0 3
+    (surface! 4) ((a :poll-once))
+    (is (< ((rect-of w 4) :left) -30000)))                          # parked again each time
+  (surface! 4) ((a :poll-once))
+  (is (> ((rect-of w 4) :left) -30000))                              # the 4th time it is left on screen
+  (is (nil? (get (a :parked) 4)))
+  # the window the user is working in is not pushed away
+  (put w :fg (hw 5))
+  (surface! 5) ((a :poll-once))
+  (is (> ((rect-of w 5) :left) -30000)))
+
+(deftest "Opus M6: a park that did not move the window is logged"
+  (def w (fake-world))
+  (def a (install-adapter w))
+  (managed-window w a 4)
+  (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350})
+  (put (w :refuse) 4 true)                                         # the app refuses to move
+  ((get (a :ctx) :hide) 4)
+  (is (find |(string/find "still on screen" ($ 1)) (w :logs))))
