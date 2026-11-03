@@ -149,7 +149,7 @@
   (cond
     (nil? tag) s
     (st/visible-tag? s tag) s
-    # TODO (ADR 0012 stage 2, R12i-L5): join the visible workspace of the screen the window is actually on
+    # Deferred (ADR 0012, R12i-L5; not needed while floats stay on their monitor): join the workspace of the screen the window is on
     (let [s2 (-> s
                  (st/update-ws tag |(ws/remove $ id))
                  (st/update-ws (st/current s) |(ws/append $ id)))]

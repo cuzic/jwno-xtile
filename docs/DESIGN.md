@@ -87,8 +87,11 @@ Run: `mise run test`. Invariants: `docs/INVARIANTS.md`. Decisions: `docs/adr/`.
 1. Multi-monitor stage 3 in the adapter: floats moving between monitors with their workspace (ADR 0012).
 2. Verify on a real desktop: drag detection, the sink window (IME, Narrator, foreground lock), adopt-existing! on
    a busy desktop, `:sw-hide` (opt-in, not built).
-3. Open review items: ADR 0006 / docs/references/jwno-ecosystem.md (J4: why `desktop-name-changed` is missed on a
-   new virtual desktop).
+3. Known limit (J4, docs/references/jwno-ecosystem.md): Jwno's `desktop-name-changed` event is sometimes missed on a new
+   virtual desktop. The adapter does not depend on it (it polls and asks Windows per window), so this is left as is.
+4. Dead path (Opus OV-M6): the `:current-desktop` port and the core's `desktop-changed` are not used by the Jwno adapter
+   (ADR 0006 D-4: workspaces are not virtual desktops). They are kept, and tested, for a possible OS-desktop binding;
+   remove them if none appears.
 
 ## Risks to spike on Windows
 

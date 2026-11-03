@@ -1,4 +1,4 @@
-# Jwno adapter, stage 1 (ADR 0010). Implements the runtime's `ctx` port on top of Jwno and
+# Jwno adapter (ADR 0010; 0011 taskbar button, 0012 monitors, 0013 gap/padding). Implements the runtime's `ctx` port on top of Jwno and
 # turns Jwno's hooks into core events.
 #
 # It imports neither jw32 nor jwno/*: Jwno's `context` and an OS-call table `win32` are passed in
@@ -141,8 +141,10 @@
   # ADR 0011 stage 0: ITaskbarList::DeleteTab makes IVirtualDesktopManager::GetWindowDesktopId fail for the window.
   # Jwno then thinks it moved to another desktop and purges it from its tree (found by the contract test; only when
   # more than one virtual desktop exists). A parked window keeps the desktop it had when we parked it.
+  (var restore-call nil)   # OV-L7: put Jwno's own method back on stop
   (when (and hide-tab? (in vd-man :call-method))
     (def orig-call (in vd-man :call-method))
+    (set restore-call (fn [] (put vd-man :call-method orig-call)))
     (put vd-man :call-method
          (fn [self method args & more]
            (def res (orig-call self method args ;more))
@@ -540,6 +542,7 @@
   (defn stop []
     (set stopped true)
     (restore-parked)
+    (when restore-call (protect (restore-call)) (set restore-call nil))
     (when sink (protect ((sink :destroy))) (set sink nil))
     (when move-hook
       (protect (w :unwatch-moves move-hook))
