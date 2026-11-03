@@ -22,6 +22,8 @@
 
 # Which jw32 functions exist in this build? (win32.janet looks the optional ones up by name)
 (use jw32/_winuser)
+(use jw32/_util)
+(import jwno/util)
 (each name ["GetClassName" "GetClassNameW" "GetWindowText" "GetWindowTextW" "IsHungAppWindow"
             "MessageBeep" "GetAncestor" "GetWindowLong" "GetWindow" "IsIconic" "IsWindowVisible"
             "GetWindowRect" "MonitorFromWindow" "GetMonitorInfo" "SetWinEventHook" "GetForegroundWindow"
@@ -62,10 +64,37 @@
          (rec :leaf-set-focus-to-hwnd ;args)
          (orig self ;args))))
 
+# ---- SAFETY GUARD for runs on a real PC (spike/real/run-real.ps1) -----------------------------------------------
+# The harness works on a fresh virtual desktop and passes one window of the USER's (the anchor) in $XTILE_ANCHOR_HWND.
+# If that window is ever on the CURRENT desktop, the run is no longer in its sandbox (the user switched back, the
+# desktop was closed, ...): then Jwno + the adapter would take the user's windows over (this happened once, run 7).
+# So: refuse to start, and quit (after the adapter put everything back) as soon as it happens.
+(def anchor-num (when-let [e (os/getenv "XTILE_ANCHOR_HWND")] (scan-number e)))
+(defn anchor-on-current-desktop? []
+  (when (and anchor-num win32)
+    (var prev nil)
+    (var found nil)
+    (for _ 0 5000
+      (def h (FindWindowEx nil prev nil nil))
+      (when (null? h) (break))
+      (when (= (util/pointer-to-number h) anchor-num) (set found h) (break))
+      (set prev h))
+    (and found ((in win32 :on-current-desktop?) found))))
+(var xtile nil)
+(when (anchor-on-current-desktop?)
+  (rec :guard-abort-at-start "the user's window is on the current desktop: not managing anything")
+  (os/exit 3))
+(when anchor-num
+  (ev/spawn
+    (forever
+      (ev/sleep 0.5)
+      (when (anchor-on-current-desktop?)
+        (rec :guard-abort "the user's window is on the current desktop: stopping")
+        (when xtile (protect ((in xtile :stop))))
+        (os/exit 3)))))
 (def key-man (in jwno/context :key-manager))
 (def keymap (:new-keymap key-man))
 
-(var xtile nil)
 (when (and install win32)
   (try
     (set xtile

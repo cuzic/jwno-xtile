@@ -87,6 +87,7 @@ try {
   Start-Sleep 2
   P "on a fresh desktop (desktops now $(DesktopCount)); running the contract tests"
   $env:CONTRACT_OUT = Join-Path $Out "contract.log"
+  $env:XTILE_ANCHOR_HWND = [string]$anchor.ToInt64()   # the contract config refuses to run if this user window is on the current desktop
   $pw = "C:\Program Files\PowerShell\7\pwsh.exe"
   $cfg = Join-Path $RepoRoot "spike\contract-config.janet"
   if ($Spike -eq "taskbar-shots") {
