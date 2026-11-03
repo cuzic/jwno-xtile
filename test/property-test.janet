@@ -59,11 +59,13 @@
    [(g/rect 0 0 1920 1080) (g/rect -1280 0 1280 720)]])
 
 (defn new-state
-  "One screen (the old behaviour) most of the time, two screens (ADR 0012) one time in three."
+  "One screen (the old behaviour) most of the time, two screens (ADR 0012) one time in three; one state in four
+  with :follow (ADR 0006 D-7e), which the frozen v0 core knows too."
   [rng]
+  (def mode (if (zero? (math/rng-int rng 4)) :follow nil))
   (if (zero? (math/rng-int rng 3))
-    (st/make (pick rng screen-pairs) tags (random-rules rng))
-    (st/make (first screens) tags (random-rules rng))))
+    (st/make (pick rng screen-pairs) tags (random-rules rng) mode)
+    (st/make (first screens) tags (random-rules rng) mode)))
 
 (defn random-facts
   "Mostly valid facts; sometimes not even a dictionary."
@@ -88,7 +90,9 @@
     6 [:desktop-changed (pick rng [;tags "bogus"])]
     7 [:screen-changed (pick rng screens)]
     8 [:window-moved id (g/rect (math/rng-int rng 50) 0 100 100)]
-    9 [:command :goto (pick rng [;tags "bogus"])]
+    9 (if (zero? (math/rng-int rng 3))
+        [:command :view (pick rng [;tags "bogus"])]
+        [:command :goto (pick rng [;tags "bogus"])])
     10 [:command :send (pick rng [;tags "bogus"])]
     11 (pick rng malformed)
     12 [:windows-observed
@@ -229,9 +233,9 @@
   (def name (get event 1))
   (when (= (get event 0) :command)
     # Q3: any command other than :reassert-focus / :reclaim-focus / :goto leaves nothing pending
-    (when (and (not (index-of name [:reassert-focus :reclaim-focus :goto])) (s :pending-focus))
+    (when (and (not (index-of name [:reassert-focus :reclaim-focus :goto :view])) (s :pending-focus))
       (errorf "Q3 pending survived a new command after %q" event))
-    (when (and (= name :goto) (s :pending-focus))
+    (when (and (index-of name [:goto :view]) (s :pending-focus))
       (unless (= ((s :pending-focus) :target) (st/focused s))
         (errorf "Q3 goto left a pending focus on a different window: %q" event)))
     (when (= name :reassert-focus)
@@ -339,7 +343,13 @@
   (when (and none? (not (empty? ((st/current-ws s) :ids)))) (errorf "F12d :focus-none with a non-empty workspace after %q" event))
   # F12b: nothing is stolen when the OS focus is not on a known window of a hidden workspace
   (when (and marked? (not (u/stray? old))) (errorf "F12b a reclaim effect without a stray focus after %q" event))
-  (when (and none? (not (u/stray? s)) (not marked?)) (errorf "F12b :focus-none without a stray focus after %q" event))
+  # (ADR 0012 R12i-H1: also after goto/:view when the focused screen's workspace is empty and the OS focus is on a
+  # window shown on ANOTHER screen)
+  (def other-screen-focus?
+    (let [os (s :os-focus) tag (and os (st/locate s os))]
+      (and tag (st/visible-tag? s tag) (not= tag (st/current s)))))
+  (when (and none? (not (u/stray? s)) (not marked?) (not other-screen-focus?))
+    (errorf "F12b :focus-none without a stray focus after %q" event))
   # F12c: silent observations never produce :focus-none directly
   (when (and none? (silent-kinds kind)) (errorf "F12c :focus-none from a silent event %q" event))
   # F12a: a state-changing, non-silent transition that leaves the focus on a parked window corrects it
@@ -446,7 +456,7 @@
   (when (and ((r :state) :external-focus)
              (not (u/stray? (r :state)))
              (not (and (= (get event 0) :command)
-                       (index-of (get event 1) [:focus-next :focus-prev :focus-master :goto]))))
+                       (index-of (get event 1) [:focus-next :focus-prev :focus-master :goto :view]))))
     (when (find |(= (first $) :focus) (r :effects))
       (errorf "E11 stole focus while external: %q" event))))
 
@@ -693,7 +703,9 @@
     (eachp [id rect] (st/placements s)
       (def r (u/update s [:window-dragged id rect]))
       (is (not (st/floating? (r :state) id)))
-      (is= [] (tuple ;(r :effects))))))
+      # no effect for the drag itself; the one thing allowed is the D-7 correction of a focus that rests on a parked
+      # window (a stale :misfit being dropped makes the state "changed", and then that correction applies)
+      (is= [] (tuple ;(filter |(not (and (index-of (first $) [:focus :focus-none]) (u/stray? s))) (r :effects)))))))
 
 (deftest "D1: a moved tile floats and the rest still tile the screen without gaps"
   (for seed 0 200

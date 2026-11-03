@@ -144,6 +144,7 @@
   (cond
     (nil? tag) s
     (st/visible-tag? s tag) s
+    # TODO (ADR 0012 stage 2, R12i-L5): join the visible workspace of the screen the window is actually on
     (let [s2 (-> s
                  (st/update-ws tag |(ws/remove $ id))
                  (st/update-ws (st/current s) |(ws/append $ id)))]
@@ -174,6 +175,10 @@
     # for the same id is recognised as the focused one
     (nil? tag) (d/assoc s {:external-focus true :os-focus id})
     (not (st/visible-tag? s tag))
+    (d/assoc s {:external-focus true :os-focus id})
+    # R12i-H1: the window that stays in front after OUR goto/:view/send is a side effect, not the user's choice: the
+    # observation must not move the focused screen back (single screen: such a window is never visible, see above)
+    (and (= id (get-in s [:stray-own :id])) (not= tag (st/current s)))
     (d/assoc s {:external-focus true :os-focus id})
     # a window of a workspace some screen shows: the focus moves to that screen (xmonad's focusWindow)
     (-> s
@@ -432,6 +437,17 @@
      [[:send id tag]]]
     [s []]))
 
+(defn- other-screen-focus-none
+  "ADR 0012 R12i-H1: after goto/:view the focused screen's workspace is empty while the OS focus is on a window shown
+  on ANOTHER screen: keys must go nowhere (xmonad: the root window), so [:focus-none]. One screen: never (that
+  window would be hidden, and `stray-effect` covers it)."
+  [s]
+  (def os (s :os-focus))
+  (def tag (and os (valid-id? os) (st/locate s os)))
+  (if (and tag (st/visible-tag? s tag) (not= tag (st/current s)) (empty? ((st/current-ws s) :ids)))
+    [[:focus-none]]
+    []))
+
 (defn- explicit-focus [s]
   (if-let [f (st/focused s)] [[:focus f]] []))
 
@@ -455,7 +471,7 @@
               # remember what we want focused: a later :reassert-focus may
               # restore it if the OS/Jwno overrides us (ADR 0009 R-10)
               s3 (if f (d/assoc s2 {:pending-focus {:target f :tag tag}}) s2)]
-          [s3 [[:goto tag] ;(explicit-focus s2)]])
+          [s3 [[:goto tag] ;(explicit-focus s2) ;(other-screen-focus-none s2)]])
         [s []]))
 
     (= name :toggle-float) [(toggle-float s) []]
@@ -599,6 +615,8 @@
             :window-surfaced [(window-surfaced s (get args 0)) [] true]
             :focus-changed [(focus-window s (get args 0)) [] true]
             :desktop-changed [(desktop-changed s (get args 0)) [] true]
+            # NOTE (R12i-L1): until stage 3 the adapter sends only the PRIMARY monitor's work area, and this writes the
+            # FOCUSED screen's rect; stage 3 replaces it by :screens-changed (matched by :device)
             :screen-changed [(if (valid-rect? (get args 0))
                                (st/set-screen s (args 0))
                                s)

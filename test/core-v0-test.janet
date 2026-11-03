@@ -27,10 +27,12 @@
   (for seed 0 120
     (def rng (math/rng (+ 90000 seed)))
     (def rules (pt/random-rules rng))
-    (var a (st/make (first pt/screens) pt/tags rules))
-    (var b (st0/make (first pt/screens) pt/tags rules))
+    (def mode (if (zero? (math/rng-int rng 4)) :follow nil))       # :follow states too (R12i-M2)
+    (var a (st/make (first pt/screens) pt/tags rules mode))
+    (var b (st0/make (first pt/screens) pt/tags rules mode))
     (for step 0 120
-      (def e (pt/random-event rng))
+      # :view is new in ADR 0012: the frozen v0 core does not know it (it would ignore it)
+      (def e (let [e (pt/random-event rng)] (if (= (get e 1) :view) [:command :goto (get e 2)] e)))
       (def ra (u/update a e))
       (def rb (u0/update b e))
       (unless (deep= (project (ra :state)) (project-old (rb :state)))

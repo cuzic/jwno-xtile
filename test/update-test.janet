@@ -704,3 +704,39 @@
   (is (nil? (u/stray-id on-b)))
   (def on-c (d/assoc s {:os-focus :c :external-focus false}))
   (is= :c (u/stray-id on-c)))
+
+# ---- R12i-H1: the old window that stays in front after OUR goto/:view/send must not move the focused screen back ----
+
+(deftest "R12i-H1: :view 2 is not undone by the observation of the old front window (shown on the other screen)"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:focus-changed :a]))
+  (def v ((u/update s [:command :view "2"]) :state))
+  (is= 1 (v :focused-screen))
+  (def seen ((u/update v [:focus-changed :a]) :state))              # the OS still shows :a (our own side effect)
+  (is= 1 (seen :focused-screen))
+  (is (seen :external-focus))
+  # the real focus change to :b then arrives and is an ordinary observation
+  (def b ((u/update seen [:focus-changed :b]) :state))
+  (is= 1 (b :focused-screen))
+  (is (not (b :external-focus))))
+
+(deftest "R12i-H1: greedyView onto an EMPTY workspace: focus-none, and the old front window does not pull the screen back"
+  (def [s _] (run (two) [:window-opened :a "1"] [:focus-changed :a]))     # screen 0: ws1 (a), screen 1: ws2 (empty)
+  (def r (u/update s [:command :goto "2"]))                                # swap: screen 0 shows ws2 (empty), screen 1 shows ws1
+  (is= "2" (st/current (r :state)))
+  (is (find |(= $ [:focus-none]) (r :effects)))
+  (def seen ((u/update (r :state) [:focus-changed :a]) :state))           # a stays in front for a moment
+  (is= "2" (st/current seen))                                              # still on the empty workspace
+  (is= 0 (seen :focused-screen)))
+
+(deftest "R12i-H1: send to the workspace of the other screen does not move the focused screen"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :w "1"] [:window-opened :b "2"] [:focus-changed :w]))
+  (def r (u/update s [:command :send "2"]))
+  (is= 0 ((r :state) :focused-screen))
+  (def seen ((u/update (r :state) [:focus-changed :w]) :state))           # w is now shown on screen 1 and still in front
+  (is= 0 (seen :focused-screen)))
+
+(deftest "R12i-M2: a window-opened for a window of the OTHER screen that already holds the OS focus moves the focused screen"
+  (def [s _] (run (two) [:window-opened :a "1"] [:focus-changed :a] [:focus-changed :z]))   # :z is not known yet
+  (def r ((u/update s [:window-opened :z "2"]) :state))
+  (is= 1 (r :focused-screen))
+  (is (not (r :external-focus))))

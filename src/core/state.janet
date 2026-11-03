@@ -24,6 +24,7 @@
   (assert (and (not (empty? tags)) (all string? tags))
           "workspace tags must be a non-empty list of strings")
   (def rects (if (indexed? screen) screen [screen]))
+  (assert (all struct? rects) "a screen is a work-area rect (struct) or a list of them")     # R12i-L3
   (assert (and (not (empty? rects)) (<= (length rects) (length tags))) "need at least as many workspaces as screens")
   (def base
   {:screens (tuple ;(seq [i :range [0 (length rects)]] {:rect (rects i) :ws (tags i)}))
@@ -52,8 +53,9 @@
 (defn visible-tag? [s tag] (not (nil? (screen-of s tag))))
 
 (defn set-current
-  "Show `tag` on the focused screen. If another screen already shows it, the focus moves to that screen (xmonad's
-  `view`); the focused screen keeps its workspace."
+  "Two meanings, by what the caller knows (R12i-L2): `tag` shown nowhere -> show it on the focused screen (`:follow`,
+  `goto` via `greedy-view`); `tag` shown on another screen -> the focus moves to that screen (xmonad's `view`;
+  `focus-window`, `:view`). The focused screen keeps its workspace in the second case."
   [s tag]
   (if-let [k (screen-of s tag)]
     (d/assoc s {:focused-screen k})
@@ -98,7 +100,8 @@
   (mapcat |((ws-of s $) :ids) (visible-tags s)))
 
 (defn placements
-  "{id rect} for every tiled window on a visible workspace (never a float), each in its own screen's rect."
+  "{id rect} for every tiled window on a visible workspace (never a float), each in its own screen's rect.
+  Needs I1 (a window is in exactly one workspace): with a duplicate the later one would win."
   [s]
   (table/to-struct
     (from-pairs

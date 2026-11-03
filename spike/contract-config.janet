@@ -49,6 +49,7 @@
 (def install (sym adapter-env "install"))
 (def win32 (sym w32-env "win32"))
 (def get-state (sym runtime-env "state"))
+(def st-current (sym state-env "current"))
 (def placements (sym state-env "placements"))
 (def default-bindings (sym keymap-env "default-bindings"))
 (def default-tags (sym adapter-env "default-tags"))
@@ -134,8 +135,9 @@
                                    (if (get-in s [:floating id]) "true" "false")
                                    (if r (string/format "[%d,%d,%d,%d]" (r :x) (r :y) (r :w) (r :h)) "null")))))
     (file/write out
-                (string/format "%.3f STATE {\"current\":%s,\"os_focus\":%s,\"external\":%s,\"windows\":[%s]}\n"
-                               (os/clock :realtime) (jstr (s :current))
+                (string/format "%.3f STATE {\"current\":%s,\"focused_screen\":%d,\"screens\":[%s],\"os_focus\":%s,\"external\":%s,\"windows\":[%s]}\n"
+                               (os/clock :realtime) (jstr (st-current s)) (s :focused-screen)
+                               (string/join (map |(jstr ($ :ws)) (s :screens)) ",")
                                (jnum-or-null (s :os-focus))
                                (if (s :external-focus) "true" "false")
                                (string/join wins ",")))
