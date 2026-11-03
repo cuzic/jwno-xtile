@@ -280,9 +280,28 @@
     [id hwnd]
     (table/to-struct (merge (w :facts hwnd) (get extras id {}))))
 
+  (var first-snapshot? true)     # ADR 0012 M12-M4: only the start-up snapshot decides the workspace by the window's monitor
+
+  (defn monitor-tag
+    "The workspace shown on the monitor the centre of `hwnd` is on (several monitors only), or nil."
+    [hwnd]
+    (when (and multi? (get win32 :window-rect))
+      (def r (protect ((get win32 :window-rect) hwnd)))
+      (when (and (r 0) (r 1))
+        (def rect (r 1))
+        (def cx (div (+ (rect :left) (rect :right)) 2))
+        (def cy (div (+ (rect :top) (rect :bottom)) 2))
+        (def s (rt/state rtm))
+        (when-let [scr (find |(let [a ($ :rect)]
+                                (and (>= cx (a :x)) (< cx (+ (a :x) (a :w))) (>= cy (a :y)) (< cy (+ (a :y) (a :h)))))
+                             (s :screens))]
+          (scr :ws)))))
+
   (defn enumerate []
     (def fresh @{})
     (def out @[])
+    (def initial? first-snapshot?)
+    (set first-snapshot? false)
     (each win (:get-window-stack (in wm :root))
       (var step :start)
       (def [ok entry]
@@ -294,7 +313,8 @@
               (when (on-current-desktop? hwnd)
                 (put fresh id (get num->hwnd id))
                 (set step :facts)
-                [id nil (facts-of id hwnd)])))))
+                # start-up only: a window the core does not know yet goes to the workspace of ITS monitor
+                [id (when (and initial? (nil? (st/locate (rt/state rtm) id))) (monitor-tag hwnd)) (facts-of id hwnd)])))))
       (if ok
         (when entry (array/push out entry))
         (log-fn :warn (string "enumerate: skipped a window (step " step ", hwnd " (in win :hwnd) "): " entry))))

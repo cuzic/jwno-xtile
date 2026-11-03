@@ -1178,3 +1178,16 @@
   (def a2 (install-adapter w2))
   ((a2 :start))
   (is= @[5] (map |($ 1) (calls-of w2 :window-opened))))
+
+(deftest "stage 3 / M12-M4: at start-up a window goes to the workspace of the monitor its centre is on; later ones follow the focus"
+  (def w (fake-world))
+  (two-monitors w)                                                    # DISPLAY1 shows ws1, DISPLAY2 shows ws2
+  (put (w :rects) 5 {:left 100 :top 100 :right 400 :bottom 400})     # on DISPLAY1
+  (put (w :rects) 6 {:left 1200 :top 100 :right 1500 :bottom 400})   # on DISPLAY2
+  ((w :add-window!) 5 g1)
+  ((w :add-window!) 6 g1)
+  (def a (install-adapter w {:multi-monitor? true}))
+  ((a :start))
+  (def s (state-of a))
+  (is= "1" (st/locate s 5))
+  (is= "2" (st/locate s 6)))
