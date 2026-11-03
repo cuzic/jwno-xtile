@@ -51,6 +51,7 @@
         :none (if (empty? args) nil "takes no argument")
         :tag (if (and (= 1 (length args)) (index-of arg tags)) nil (string "needs one of the workspace tags, got " arg))
         :layout (if (and (= 1 (length args)) (index-of arg layout/layouts)) nil (string "needs a layout, got " arg))
+        :screen (if (and (= 1 (length args)) (int? arg) (<= 0 arg 8)) nil (string "needs a screen number 0..8, got " arg))
         :internal (string name " is issued by the shell and cannot be bound")
         (string "unsupported argument kind " want)))))
 
@@ -96,7 +97,10 @@
      [(m "Period") [:command :dec-master]]
      [(m "Space") [:command :next-layout]]
      [(ms "C") [:command :close]]
-     [(m "N") [:command :refresh]]]
+     [(m "N") [:command :refresh]]
+     # ADR 0012: screens 0..2 on w e r, as in xmonad (view / shiftToScreen)
+     [(m "W") [:command :focus-screen 0]] [(m "E") [:command :focus-screen 1]] [(m "R") [:command :focus-screen 2]]
+     [(ms "W") [:command :send-to-screen 0]] [(ms "E") [:command :send-to-screen 1]] [(ms "R") [:command :send-to-screen 2]]]
    ;(seq [i :range [0 (min 9 (length tags))]]
       [(m (string (+ i 1))) [:command :goto (tags i)]])
    ;(seq [i :range [0 (min 9 (length tags))]]

@@ -119,3 +119,13 @@ xmonad の `rescreen`（X の画面の順で割り当て直す）との違いを
   段階 1 では、モニタ 1 つのとき影響が無い。
 - **Low（実装時のレビューで足りる）**: 段階 1b でテストの `{:current …}` の作り方が空振りしないよう、`st/make` に集約する。`core-v0` との比較の射影は `:screens`・`:focused-screen` を除き、`:current`・`:screen` は `st/current`・`st/screen` で比べる。
   `:device` の安定性（同じ物理モニタが同じ名前を保つ前提）は unverified on Windows。`greedyView` で空のワークスペースを呼んだときの `[:focus-none]` は、フォーカスのあるモニタのワークスペースが空かで決まる（差異として ADR 0007 に書く）。
+
+## 実装の状況（2026-11-03）
+- **段階 1a・1b・2（Core）は実装済み**（Opus の実装レビューを反映）。`:screens`／`:focused-screen`、判定表の書き換え、`goto`＝`greedyView`・`:view`、`:focus-screen N`・`:send-to-screen N`（xmonad の `mod-{w,e,r}`／`mod-shift-{w,e,r}`。引数は
+  モニタの添字。ADR の初案の `next|prev` から、xmonad に合わせて添字に変えた）、`[:screens-changed [{:device :rect} …]]`（`rescreen`: 同じ `:device` は同じワークスペースを保つ、新しいモニタは見えていない先頭、
+  消えたモニタのワークスペースは hidden で窓は park、現在のワークスペースは必ず見えたまま）。既定の束縛は `Alt+w/e/r`（フォーカス）、`Alt+Shift+w/e/r`（送る）。
+- テスト: 凍結した旧 Core との差分（単一モニタの完全互換）、プロパティテスト（生成器の 3 分の 1 が 2 モニタ。M-1・M-2・I5〜I7 のモニタごと、rescreen は窓を失わない）、単体テスト。
+- **未実装（段階 3）**: アダプタ（`:enumerate-monitors` から `:screens-changed` を作る、`adopt-existing!` が全モニタを対象にする、窓のモニタの判定、`recover-strays` の戻し先）。複数モニタの実機は手元に無く、unverified on Windows。
+- **フロートの扱い（M12b-M3）の決定**: Core はフロートの位置を持たない（ADR 0008）ので、ワークスペースが別のモニタへ移る（`greedyView` の入れ替え、`rescreen`）ときの**フロートの移動はアダプタの仕事**にする。
+  アダプタは窓の位置を知っているので、`:screens-changed` と、`:place` が出るワークスペースの入れ替えで、そのワークスペースのフロートを「元のモニタの矩形から新しいモニタの矩形への差」だけ動かす（段階 3 で実装）。
+  それまでは、フロートは絶対位置のまま残る既知の制限。

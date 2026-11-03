@@ -80,7 +80,7 @@
 
 (defn random-event [rng]
   (def id (keyword "w" (math/rng-int rng 12)))
-  (case (math/rng-int rng 24)
+  (case (math/rng-int rng 27)
     0 [:window-opened id]
     1 [:window-opened id (pick rng tags)]
     2 [:window-opened id "bogus"]
@@ -90,6 +90,14 @@
     6 [:desktop-changed (pick rng [;tags "bogus"])]
     7 [:screen-changed (pick rng screens)]
     8 [:window-moved id (g/rect (math/rng-int rng 50) 0 100 100)]
+    21 [:command :focus-screen (math/rng-int rng 3)]
+    22 [:command :send-to-screen (math/rng-int rng 3)]
+    23 (pick rng [[:screens-changed [{:device "A" :rect (g/rect 0 0 1000 600)}]]
+                  [:screens-changed [{:device "A" :rect (g/rect 0 0 1000 600)} {:device "B" :rect (g/rect 1000 0 1000 600)}]]
+                  [:screens-changed [{:device "B" :rect (g/rect 1000 0 1000 600)} {:device "A" :rect (g/rect 0 0 1000 600)}]]
+                  [:screens-changed [{:device "C" :rect (g/rect 0 0 800 600)}]]
+                  [:screens-changed [{:device "A" :rect (g/rect 0 0 1000 600)} {:device "B" :rect (g/rect 1000 0 1000 600)}
+                                     {:device "C" :rect (g/rect 2000 0 1000 600)}]]])
     9 (if (zero? (math/rng-int rng 3))
         [:command :view (pick rng [;tags "bogus"])]
         [:command :goto (pick rng [;tags "bogus"])])
@@ -348,7 +356,8 @@
   (def other-screen-focus?
     (let [os (s :os-focus) tag (and os (st/locate s os))]
       (and tag (st/visible-tag? s tag) (not= tag (st/current s)))))
-  (when (and none? (not (u/stray? s)) (not marked?) (not other-screen-focus?))
+  (when (and none? (not (u/stray? s)) (not marked?) (not other-screen-focus?)
+             (not (and (= kind :command) (= (get event 1) :focus-screen))))      # asked for explicitly (an empty screen)
     (errorf "F12b :focus-none without a stray focus after %q" event))
   # F12c: silent observations never produce :focus-none directly
   (when (and none? (silent-kinds kind)) (errorf "F12c :focus-none from a silent event %q" event))
@@ -456,7 +465,7 @@
   (when (and ((r :state) :external-focus)
              (not (u/stray? (r :state)))
              (not (and (= (get event 0) :command)
-                       (index-of (get event 1) [:focus-next :focus-prev :focus-master :goto :view]))))
+                       (index-of (get event 1) [:focus-next :focus-prev :focus-master :goto :view :focus-screen]))))
     (when (find |(= (first $) :focus) (r :effects))
       (errorf "E11 stole focus while external: %q" event))))
 
@@ -752,3 +761,25 @@
     (def hidden (sort (array ;(filter |(not (index-of $ (vis-of s))) (stack-ids s)))))
     (def got (sort (array ;(map |($ 1) (filter |(= (first $) :hide) (r :effects))))))
     (is= hidden got)))
+
+(deftest "ADR 0012 rescreen: no window is ever lost, the current workspace stays visible, every workspace is on at most one screen"
+  (for seed 0 200
+    (def rng (math/rng (+ 95000 seed)))
+    (var s (new-state rng))
+    (for _ 0 30 (set s ((u/update s (random-event rng)) :state)))
+    (for _ 0 20
+      (def before (sort (array ;(stack-ids s))))
+      (def cur (st/current s))
+      (def ev (pick rng [[:screens-changed [{:device "A" :rect (g/rect 0 0 1000 600)}]]
+                         [:screens-changed [{:device "A" :rect (g/rect 0 0 1000 600)} {:device "B" :rect (g/rect 1000 0 1000 600)}]]
+                         [:screens-changed [{:device "B" :rect (g/rect 1000 0 1000 600)}]]
+                         [:screens-changed [{:device "C" :rect (g/rect 0 0 800 600)} {:device "A" :rect (g/rect 800 0 800 600)}]]]))
+      (def r (u/update s ev))
+      (def s2 (r :state))
+      (is= before (sort (array ;(stack-ids s2))))                                     # nothing lost
+      (is (st/visible-tag? s2 cur))                                                    # the workspace we were in stays visible
+      (is= (length (distinct (st/visible-tags s2))) (length (st/visible-tags s2)))     # M-2
+      (is (< -1 (s2 :focused-screen) (length (s2 :screens))))                          # M-1
+      (each e (r :effects)                                                             # a hide never targets a visible window
+        (when (= (first e) :hide) (is (not (index-of (e 1) (st/vis-ids s2))))))
+      (set s s2))))

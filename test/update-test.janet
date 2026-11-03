@@ -740,3 +740,61 @@
   (def r ((u/update s [:window-opened :z "2"]) :state))
   (is= 1 (r :focused-screen))
   (is (not (r :external-focus))))
+
+# ---- ADR 0012 stage 2: focus-screen, send-to-screen, screens-changed -----------------------------------------
+
+(deftest "focus-screen N moves the focus to the screen's workspace (explicit focus); an empty workspace gets focus-none"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:focus-changed :a]))
+  (def r (u/update s [:command :focus-screen 1]))
+  (is= 1 ((r :state) :focused-screen))
+  (is= [[:focus :b]] (tuple ;(r :effects)))
+  (is= [] ((u/update s [:command :focus-screen 0]) :effects))                       # already there
+  (is= [] ((u/update s [:command :focus-screen 5]) :effects))                       # no such screen
+  (def [e _] (run (two) [:window-opened :a "1"] [:focus-changed :a]))               # screen 1 shows an empty ws
+  (is= [[:focus-none]] (tuple ;((u/update e [:command :focus-screen 1]) :effects))))
+
+(deftest "send-to-screen N sends the focused window to the workspace on screen N; the view stays; only what is looked at"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :c "1"] [:window-opened :b "2"] [:focus-changed :c]))
+  (def r (u/update s [:command :send-to-screen 1]))
+  (is= "2" (st/locate (r :state) :c))
+  (is= 0 ((r :state) :focused-screen))
+  (is (find |(= $ [:send :c "2"]) (r :effects)))
+  # not actionable (the OS focus is elsewhere): nothing
+  (is= [] ((u/update (d/assoc s {:os-focus :b}) [:command :send-to-screen 1]) :effects))
+  (is= [] ((u/update s [:command :send-to-screen 0]) :effects)))
+
+(def mon-a {:device "A" :rect (g/rect 0 0 1000 600)})
+(def mon-b {:device "B" :rect (g/rect 1000 0 1000 600)})
+
+(deftest "rescreen: a monitor that stays keeps its workspace (matched by device), even when the order changes"
+  (def [s0 _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"]))
+  (def s1 ((u/update s0 [:screens-changed [mon-a mon-b]]) :state))        # names the devices: matched by position
+  (is= "1" (((s1 :screens) 0) :ws))
+  # the user rearranges the monitors: B is now first. Each keeps its workspace
+  (def s2 ((u/update s1 [:screens-changed [mon-b mon-a]]) :state))
+  (is= "2" (((s2 :screens) 0) :ws))
+  (is= "1" (((s2 :screens) 1) :ws))
+  (is= "B" (((s2 :screens) 0) :device)))
+
+(deftest "rescreen: a monitor going away hides its workspace (windows parked), the current workspace stays visible"
+  (def [s0 _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:focus-changed :b]))
+  (def s1 ((u/update s0 [:screens-changed [mon-a mon-b]]) :state))
+  (def s1 ((u/update s1 [:focus-changed :b]) :state))                       # the focus is on screen 1 (B)
+  (is= 1 (s1 :focused-screen))
+  (def r (u/update s1 [:screens-changed [mon-a]]))                          # B is unplugged: it was the FOCUSED monitor
+  (def s2 (r :state))
+  (is= 1 (length (s2 :screens)))
+  (is= "2" (st/current s2))                                                 # its workspace moved to screen 0, still visible
+  (is (not (st/visible-tag? s2 "1")))                                       # the other one is hidden now
+  (is (find |(= $ [:hide :a]) (r :effects)))
+  (is (not (find |(= $ [:hide :b]) (r :effects)))))
+
+(deftest "rescreen: a new monitor shows the first workspace no screen shows; bad input changes nothing"
+  (def [s0 _] (run (st/make [(g/rect 0 0 1000 600)] ["1" "2" "3"]) [:window-opened :a "1"] [:window-opened :c "2"]))
+  (def r ((u/update s0 [:screens-changed [mon-a mon-b]]) :state))
+  (is= "1" (((r :screens) 0) :ws))
+  (is= "2" (((r :screens) 1) :ws))
+  (is= s0 ((u/update s0 [:screens-changed []]) :state))
+  (is= s0 ((u/update s0 [:screens-changed [{:device "A" :rect {:x 0}}]]) :state))
+  (is= s0 ((u/update s0 [:screens-changed [mon-a mon-a]]) :state))          # a device twice
+  (is= s0 ((u/update s0 [:screens-changed "x"]) :state)))

@@ -6,6 +6,7 @@
 #   [:window-surfaced id]             (the adapter gave up parking it: it joins the visible workspace as a float)
 #   [:window-dragged id rect]         (the user moved/resized it: floats, if rect differs from our placement)
 #   [:focus-changed id-or-nil]        [:desktop-changed tag]
+#   [:screens-changed [{:device d :rect r} ...]]   (ADR 0012: monitors came, went or changed)
 #   [:screen-changed rect]            [:window-moved id observed-rect]
 #   [:windows-observed [[id tag-or-nil] ...]]   (snapshot, first = topmost)
 #   [:command name & args]            (incl. :refresh)
@@ -401,11 +402,11 @@
 
 (def command-args
   "Every command the core understands -> what argument it takes
-  (:none | :tag | :layout). The keymap validates bindings against this."
+  (:none | :tag | :layout | :screen). The keymap validates bindings against this."
   (struct
     ;(mapcat |[$ :none]
               [;(keys ws-commands) ;(keys reorder-commands) :close :refresh])
-    :goto :tag :view :tag :send :tag :set-layout :layout :toggle-float :none
+    :goto :tag :view :tag :send :tag :focus-screen :screen :send-to-screen :screen :set-layout :layout :toggle-float :none
     :reassert-focus :internal :reclaim-focus :internal))   # :internal = issued by the shell, never bound to a key
 
 (defn- own-stray
@@ -451,6 +452,73 @@
 (defn- explicit-focus [s]
   (if-let [f (st/focused s)] [[:focus f]] []))
 
+# ---- ADR 0012 stage 2: screens ---------------------------------------------------------------------------------
+
+(defn- valid-screen? [s i] (and (int? i) (<= 0 i) (< i (length (s :screens)))))
+
+(defn- focus-screen
+  "xmonad's `mod-{w,e,r}` (view the workspace of screen N = focus that screen). Explicit focus: the user asked."
+  [s i]
+  (if (and (valid-screen? s i) (not= i (s :focused-screen)))
+    (let [s2 (-> s (d/assoc {:focused-screen i :external-focus true}) own-stray)]
+      [s2 (if (empty? ((st/current-ws s2) :ids)) [[:focus-none]] (explicit-focus s2))])
+    [s []]))
+
+(defn- send-to-screen
+  "xmonad's `mod-shift-{w,e,r}` (shiftToScreen): the focused window goes to the workspace shown on screen N; the
+  view stays. Same guards as `send` (only the window the user is looking at)."
+  [s i]
+  (def id (st/focused s))
+  (if (and id (actionable? s) (valid-screen? s i) (not= i (s :focused-screen)))
+    (let [tag (((s :screens) i) :ws)]
+      [(-> s
+           (st/update-current |(ws/remove $ id))
+           (st/update-ws tag |(ws/insert $ id))
+           (d/assoc {:stray-own {:id id}}))
+       [[:send id tag]]])
+    [s []]))
+
+(defn- valid-monitor? [m]
+  (and (dictionary? m) (valid-rect? (get m :rect)) (string? (get m :device))))
+
+(defn- rescreen
+  "ADR 0012 D-4/M12-M3, xmonad's `rescreen`: the monitors changed. `monitors` = [{:device name :rect work-area} ...] in
+  display order. A monitor that was there keeps its workspace (matched by :device; a state built without devices is
+  matched by position); a new one gets the first workspace no screen shows; a workspace whose monitor went away is
+  hidden (its windows are parked, never lost). The CURRENT workspace always stays visible: if its monitor is gone it
+  moves to screen 0."
+  [s monitors]
+  (if-not (and (indexed? monitors) (not (empty? monitors)) (all valid-monitor? monitors)
+               (= (length monitors) (length (distinct (map |($ :device) monitors)))))
+    s
+    (let [old (s :screens)
+          tags (s :tags)
+          monitors (slice monitors 0 (min (length monitors) (length tags)))
+          devices? (all |(get $ :device) old)
+          matched (seq [[i m] :pairs monitors]
+                    (def o (if devices?
+                             (find |(= (get $ :device) (m :device)) old)
+                             (get old i)))
+                    (when o (o :ws)))
+          used (from-pairs (map |[$ true] (filter identity matched)))
+          free (filter |(not (used $)) tags)
+          assigned (do (var f 0)
+                     (seq [w :in matched]
+                       (or w (let [t (get free f)] (++ f) t))))
+          old-current (st/current s)
+          old-device (get ((s :screens) (s :focused-screen)) :device)
+          new-focus (if devices?
+                      (find |(= ((monitors $) :device) old-device) (range (length monitors)))
+                      (when (< (s :focused-screen) (length monitors)) (s :focused-screen)))
+          # the current workspace must stay on some screen: with its own monitor gone it takes screen 0
+          assigned (if (or new-focus (index-of old-current assigned))
+                     assigned
+                     (tuple old-current ;(slice assigned 1)))
+          focus (or new-focus (index-of old-current assigned) 0)]
+      (d/assoc s {:screens (tuple ;(seq [[i m] :pairs monitors]
+                                     {:rect (m :rect) :ws (assigned i) :device (m :device)}))
+                  :focused-screen focus}))))
+
 # -> [state' explicit-effects]
 (defn- command [s name args]
   (cond
@@ -475,6 +543,10 @@
         [s []]))
 
     (= name :toggle-float) [(toggle-float s) []]
+
+    (= name :focus-screen) (focus-screen s (get args 0))
+
+    (= name :send-to-screen) (send-to-screen s (get args 0))
 
     (= name :reassert-focus) (reassert-focus s args)
 
@@ -617,6 +689,7 @@
             :desktop-changed [(desktop-changed s (get args 0)) [] true]
             # NOTE (R12i-L1): until stage 3 the adapter sends only the PRIMARY monitor's work area, and this writes the
             # FOCUSED screen's rect; stage 3 replaces it by :screens-changed (matched by :device)
+            :screens-changed [(rescreen s (get args 0)) [] false]
             :screen-changed [(if (valid-rect? (get args 0))
                                (st/set-screen s (args 0))
                                s)

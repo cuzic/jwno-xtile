@@ -32,7 +32,12 @@
     (var b (st0/make (first pt/screens) pt/tags rules mode))
     (for step 0 120
       # :view is new in ADR 0012: the frozen v0 core does not know it (it would ignore it)
-      (def e (let [e (pt/random-event rng)] (if (= (get e 1) :view) [:command :goto (get e 2)] e)))
+      (def e (let [e (pt/random-event rng)]
+               (cond
+                 (= (get e 1) :view) [:command :goto (get e 2)]
+                 # new in ADR 0012 stage 2: the frozen core would ignore them
+                 (or (= (get e 0) :screens-changed) (index-of (get e 1) [:focus-screen :send-to-screen])) [:command :refresh]
+                 e)))
       (def ra (u/update a e))
       (def rb (u0/update b e))
       (unless (deep= (project (ra :state)) (project-old (rb :state)))
