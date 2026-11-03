@@ -283,9 +283,9 @@
   (put os :desktop "1")                   # the OS never left desktop 1
   (put (os :fail) :goto true)
   (rt/dispatch r [:command :goto "2"])
-  (is= "2" ((rt/state r) :current))       # the core got ahead of the OS
+  (is= "2" (st/current (rt/state r)))       # the core got ahead of the OS
   (run-later! os)
-  (is= "1" ((rt/state r) :current)))
+  (is= "1" (st/current (rt/state r))))
 
 # ---- R-10: delayed :reassert-focus after a :goto that carried a :focus ----
 
@@ -379,13 +379,13 @@
   (put os :desktop "3")
   (def r (make-rt os))
   (rt/start r)
-  (is= "3" ((rt/state r) :current))
+  (is= "3" (st/current (rt/state r)))
 
   # an unknown desktop (nil) leaves the initial workspace alone and does not crash
   (def os2 (fake-os))
   (def r2 (make-rt os2))
   (rt/start r2)
-  (is= "1" ((rt/state r2) :current)))
+  (is= "1" (st/current (rt/state r2))))
 
 (deftest "ADR 0006: the runtime executes :hide before :show before :place, and a failing :hide is a failure like any other"
   (def os (fake-os))

@@ -145,13 +145,13 @@
       (errorf "I2 no focus on non-empty workspace after %q" event))
     (unless (and (>= (w :nmaster) 0) (<= 0.1 (w :ratio) 0.9))
       (errorf "I3 layout params out of range after %q" event)))
-  (unless (index-of (s :current) (s :tags))
+  (unless (index-of (st/current s) (s :tags))
     (errorf "I4 bad current after %q" event))
   # Q4: a pending :goto focus always names a window in the stack, on the visible workspace's tag
   (when-let [p (s :pending-focus)]
     (unless (index-of (p :target) all)
       (errorf "Q4 pending target %q is not in the stack after %q" (p :target) event))
-    (unless (= (p :tag) (s :current))
+    (unless (= (p :tag) (st/current s))
       (errorf "Q4 pending tag %q is not current after %q" (p :tag) event)))
   (def w (st/current-ws s))
   (def p (st/placements s))
@@ -223,7 +223,7 @@
       (def os (old :os-focus))
       (def want?
         (and (= 2 (length event)) t os
-             (= (st/locate old t) (old :current))
+             (= (st/locate old t) (st/current old))
              (not (old :external-focus))
              (not (st/floating? old os))
              (not= os t)))
@@ -234,9 +234,10 @@
             (errorf "Q1 reassert should emit only [:focus %q], got %q" t (r :effects)))
           (unless (nil? (s :pending-focus))
             (errorf "Q2 reassert did not consume the pending focus"))
-          (each k [:current :external-focus :os-focus :floating]
+          (each k [:external-focus :os-focus :floating]
             (unless (deep= (old k) (s k))
               (errorf "Q2 reassert changed %q" k)))
+          (unless (= (st/current old) (st/current s)) (errorf "Q2 reassert changed the current workspace"))
           (unless (= (st/focused s) t)
             (errorf "Q2 reassert did not move the model focus to the target")))
         (unless (and (deep= s old) (empty? (r :effects)))
@@ -252,7 +253,7 @@
                      (struct? rect) (int-ish? (get rect :x)) (int-ish? (get rect :y))
                      (int-ish? (get rect :w)) (int-ish? (get rect :h)) (pos? (get rect :w)) (pos? (get rect :h))))
     (def tag (and valid? (st/locate old id)))
-    (def acts? (and tag (= tag (old :current)) (not (st/floating? old id))))
+    (def acts? (and tag (= tag (st/current old)) (not (st/floating? old id))))
     (cond
       (not acts?)
       (unless (and (deep= s old) (empty? (r :effects)))
@@ -264,8 +265,9 @@
         (unless (deep= (r :effects) []) (errorf "D2 unmoved window produced effects: %q" event)))
       (do
         (unless (st/floating? s id) (errorf "D1 a moved window did not become floating: %q" event))
-        (each k [:os-focus :external-focus :current]
+        (each k [:os-focus :external-focus]
           (unless (deep= (old k) (s k)) (errorf "D1 window-dragged changed %q" k)))
+        (unless (= (st/current old) (st/current s)) (errorf "D1 window-dragged changed the current workspace"))
         (unless (deep= ((st/current-ws old) :ids) ((st/current-ws s) :ids))
           (errorf "D1 window-dragged reordered the stack: %q" event))
         (unless (= (st/focused old) (st/focused s)) (errorf "D1 window-dragged moved the focus: %q" event))
@@ -328,9 +330,9 @@
              (not (or focus? none?)))
     (errorf "F12a the OS focus stays on a parked window after %q" event))
   (when (and (= kind :command) (index-of (get event 1) [:goto :send :close :toggle-float])
-             (u/stray? s) (or (not= (old :current) (s :current)) (not= (vis-of old) (vis-of s)))
+             (u/stray? s) (or (not= (st/current old) (st/current s)) (not= (vis-of old) (vis-of s)))
              (not (or focus? none?)))
-    (errorf "F12a (command) the OS focus stays on a parked window after %q: fx=%q os=%q cur=%q tag=%q focused=%q ext=%q" event fx (s :os-focus) (s :current) (st/locate s (s :os-focus)) (st/focused s) (s :external-focus))))
+    (errorf "F12a (command) the OS focus stays on a parked window after %q: fx=%q os=%q cur=%q tag=%q focused=%q ext=%q" event fx (s :os-focus) (st/current s) (st/locate s (s :os-focus)) (st/focused s) (s :external-focus))))
 
 (defn- valid-id-test? [x] (or (number? x) (keyword? x) (string? x)))
 
@@ -341,14 +343,14 @@
     (def id (get event 1))
     (def was (and (valid-id-test? id) (st/locate old id)))
     (cond
-      (or (nil? was) (= was (old :current)))
+      (or (nil? was) (= was (st/current old)))
       (unless (= s old) (errorf "S-1 an unknown/visible window changed the state: %q" event))
       (do
-        (unless (= (st/locate s id) (s :current)) (errorf "S-1 the surfaced window is not on the current workspace: %q" event))
+        (unless (= (st/locate s id) (st/current s)) (errorf "S-1 the surfaced window is not on the current workspace: %q" event))
         (unless (st/floating? s id) (errorf "S-1 the surfaced window is not a float: %q" event))
         (unless (find |(= $ [:show id]) (r :effects)) (errorf "S-1 no :show for the surfaced window: %q" event))
         (when (find |(and (= (first $) :place) (= (get $ 1) id)) (r :effects)) (errorf "S-1 a float was placed: %q" event))
-        (unless (= (old :current) (s :current)) (errorf "S-1 :current changed: %q" event))
+        (unless (= (st/current old) (st/current s)) (errorf "S-1 :current changed: %q" event))
         (unless (= (old :os-focus) (s :os-focus)) (errorf "S-1 :os-focus changed: %q" event))))))
 
 (defn check-effects [old r event]
@@ -385,7 +387,7 @@
   (when (and (not (silent-kinds kind)) (st/focused s)
              (not (s :external-focus))
              (not= (st/focused s) (st/focused old))
-             (= (s :current) (old :current))
+             (= (st/current s) (st/current old))
              (not= kind :window-moved))
     (unless (find |(= $ [:focus (st/focused s)]) fx)
       (errorf "E4 focus changed without :focus effect after %q" event)))
@@ -535,8 +537,8 @@
                      [[:focus-changed x] [:desktop-changed tag]]))
       (def b (reduce |((u/update $0 $1) :state) s
                      [[:desktop-changed tag] [:focus-changed x]]))
-      (is= (a :current) (b :current))
-      (is= tag (a :current))
+      (is= (st/current a) (st/current b))
+      (is= tag (st/current a))
       (is= x (st/focused a))
       (is= x (st/focused b))
       (is (not (a :external-focus)))
@@ -608,7 +610,7 @@
     (def x (keyword "obs" (math/rng-int rng 6)))
     (def snap [:windows-observed
                (tuple ;(seq [i :range [0 (+ 1 (math/rng-int rng 4))]]
-                         [(keyword "obs" i) (s :current)]) [x (s :current)])])
+                         [(keyword "obs" i) (st/current s)]) [x (st/current s)])])
     (def run2 |(reduce (fn [acc e] ((u/update acc e) :state)) s $))
     (def a (run2 [[:focus-changed x] snap]))
     (def b (run2 [snap [:focus-changed x]]))

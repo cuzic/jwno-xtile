@@ -709,11 +709,11 @@
   (managed-window w a 4)
   (managed-window w a 5)
   ((w :xtile-command) :goto 2)
-  (is= "2" ((state-of a) :current))
+  (is= "2" (st/current (state-of a)))
   ((w :xtile-command) :goto "1")
-  (is= "1" ((state-of a) :current))
+  (is= "1" (st/current (state-of a)))
   ((w :xtile-command) :focus-next)                 # other commands are untouched
-  (is= "1" ((state-of a) :current)))
+  (is= "1" (st/current (state-of a))))
 
 (deftest "after stop nothing re-arms itself: Jwno must be able to exit (a self-rescheduling timer keeps the event loop alive)"
   (def w (fake-world))
@@ -872,7 +872,7 @@
     (when (and tag (not (get (w :minimized) n)))
       (def r (get (w :rects) n))
       (def off? (and r (< (r :left) -30000)))
-      (if (= tag (s :current))
+      (if (= tag (st/current s))
         (when off? (errorf "P-1 window %q is in the visible workspace %q but off-screen (%s)" n tag ctx-msg))
         (unless off? (errorf "P-1 window %q is on hidden workspace %q but on screen at %q (%s)" n tag r ctx-msg))))))
 
@@ -1028,7 +1028,7 @@
     (put (w :rects) 4 {:left 100 :top 50 :right 400 :bottom 350}) ((a :poll-once)) (flush! w))
   (is (nil? (get (a :parked) 4)))
   (def s (state-of a))
-  (is= (s :current) (st/locate s 4))                                  # moved to the workspace we look at ...
+  (is= (st/current s) (st/locate s 4))                                  # moved to the workspace we look at ...
   (is (st/floating? s 4))                                             # ... as a float
   # a refresh, and then a goto elsewhere: it is never parked again, and the core is told again so it follows us
   (rt/dispatch (a :rt) [:command :refresh]) (flush! w)

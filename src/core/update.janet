@@ -96,12 +96,12 @@
     (not (valid-id? id)) s
     (known? s id) s
     (and tag (not (valid-tag? s tag))) s
-    (let [tag (or tag (hidden-tag s0 id) (s :current))
+    (let [tag (or tag (hidden-tag s0 id) (st/current s))
           s2 (st/update-ws s tag |(ws/insert $ id))]
       # Jwno reports focus on a new hwnd BEFORE :window-opened, and does not
       # repeat it. If this is the window the OS already focused, adopt that
       # observation instead of waiting for one that will never come.
-      (if (and (= tag (s :current)) (= id (s :os-focus)))
+      (if (and (= tag (st/current s)) (= id (s :os-focus)))
         (d/assoc s2 {:external-focus false})
         s2))))
 
@@ -143,10 +143,10 @@
   (def tag (when (valid-id? id) (st/locate s id)))
   (cond
     (nil? tag) s
-    (= tag (s :current)) s
+    (= tag (st/current s)) s
     (let [s2 (-> s
                  (st/update-ws tag |(ws/remove $ id))
-                 (st/update-ws (s :current) |(ws/append $ id)))]
+                 (st/update-ws (st/current s) |(ws/append $ id)))]
       (set-floating s2 id true))))
 
 (defn- window-seen
@@ -173,7 +173,7 @@
     # a window we do not know (yet): remember it, so a following :window-opened
     # for the same id is recognised as the focused one
     (nil? tag) (d/assoc s {:external-focus true :os-focus id})
-    (not= tag (s :current))
+    (not= tag (st/current s))
     (d/assoc s {:external-focus true :os-focus id})
     (-> s
         (st/update-ws tag |(ws/focus-id $ id))
@@ -182,9 +182,9 @@
 (defn- desktop-changed [s tag]
   (cond
     (not (valid-tag? s tag)) s
-    (= tag (s :current)) s
+    (= tag (st/current s)) s
     (let [id (s :os-focus)
-          s2 (-> s (d/assoc {:current tag}) (d/without :os-focus))]
+          s2 (-> s (st/set-current tag) (d/without :os-focus))]
       (if (and id (= tag (st/locate s2 id)))
         (-> s2
             (st/update-ws tag |(ws/focus-id $ id))
@@ -232,7 +232,7 @@
                     (cond
                       (nil? have)
                       (let [a2 (-> acc
-                                   (st/update-ws (or tag (hidden-tag acc id) (acc :current)) |(ws/append $ id))
+                                   (st/update-ws (or tag (hidden-tag acc id) (st/current acc)) |(ws/append $ id))
                                    (forget-hidden-from id))
                             f (if (dictionary? facts) facts)]
                         (if (and f (= :float (cl/classify (a2 :rules) f)))
@@ -252,9 +252,9 @@
         # The OS focus may have been observed before this window set was (at
         # startup, or a snapshot adding the focused window). That observation
         # is still valid: adopt it, as :window-opened does.
-        (if (and os (= (st/locate acc os) (acc :current)))
+        (if (and os (= (st/locate acc os) (st/current acc)))
           (-> acc
-              (st/update-ws (acc :current) |(ws/focus-id $ os))
+              (st/update-ws (st/current acc) |(ws/focus-id $ os))
               (d/assoc {:external-focus false}))
           acc)))))
 
@@ -266,7 +266,7 @@
   (def tag (and (valid-id? id) (valid-rect? rect) (st/locate s id)))
   (cond
     (nil? tag) s
-    (not= tag (s :current)) s
+    (not= tag (st/current s)) s
     (st/floating? s id) s
     (= rect ((st/placements s) id))
     (if (get-in s [:misfit id])
@@ -330,7 +330,7 @@
   (def t (and p (p :target)))
   (def os (s :os-focus))
   (if (and (empty? args) t os
-           (= (st/locate s t) (s :current))
+           (= (st/locate s t) (st/current s))
            (not (external? s))
            (not (st/floating? s os))
            (not= os t))
@@ -346,7 +346,7 @@
   (def id (s :os-focus))
   (when (and id (valid-id? id))
     (def tag (st/locate s id))
-    (when (and tag (not= tag (s :current))) id)))
+    (when (and tag (not= tag (st/current s))) id)))
 
 (defn stray?  [s] (not (nil? (stray-id s))))
 
@@ -380,7 +380,8 @@
             # the user chose a parked window: go to its workspace instead of pulling them back
             (let [tag (st/locate s os)]
               [(-> s1
-                   (d/assoc {:current tag :external-focus false})
+                   (st/set-current tag)
+                   (d/assoc {:external-focus false})
                    (st/update-ws tag |(ws/focus-id $ os)))
                [[:goto tag]]])        # derive-effects adds hide/show/place and the :focus itself
             (if-let [e (stray-effect s)]
@@ -406,14 +407,14 @@
 
 (defn- goto-tag [s tag]
   # :os-focus stays: the OS front window really is still the old one (an observation, ADR 0005)
-  (-> s (d/assoc {:current tag :external-focus true}) own-stray))
+  (-> s (st/set-current tag) (d/assoc {:external-focus true}) own-stray))
 
 (defn- send-focused
   "xmonad's `shift`: move the focused window to another workspace; the view
   stays where it is."
   [s tag]
   (def id (st/focused s))
-  (if (and id (actionable? s) (valid-tag? s tag) (not= tag (s :current)))
+  (if (and id (actionable? s) (valid-tag? s tag) (not= tag (st/current s)))
     [(-> s
          (st/update-current |(ws/remove $ id))
          (st/update-ws tag |(ws/insert $ id))
@@ -438,7 +439,7 @@
 
     (= name :goto)
     (let [tag (get args 0)]
-      (if (and (valid-tag? s tag) (not= tag (s :current)))
+      (if (and (valid-tag? s tag) (not= tag (st/current s)))
         (let [s2 (goto-tag s tag)
               f (st/focused s2)
               # remember what we want focused: a later :reassert-focus may
@@ -515,7 +516,7 @@
   (def f (st/focused new))
   (when (and f (not silent?) (not (external? new))
              (or (not= f (st/focused old))
-                 (not= (old :current) (new :current))))
+                 (not= (st/current old) (st/current new))))
     (array/push effects [:focus f]))
   effects)
 
@@ -544,7 +545,7 @@
   (cond
     (nil? p) s
     (or (nil? (st/locate s (p :target)))
-        (not= (s :current) (p :tag))
+        (not= (st/current s) (p :tag))
         (and (= kind :focus-changed) (= (get args 0) (p :target)))
         # a decision the core itself just took (new window, close) wins
         (and (index-of kind [:window-opened :window-seen :window-closed])
@@ -585,7 +586,7 @@
             :focus-changed [(focus-window s (get args 0)) [] true]
             :desktop-changed [(desktop-changed s (get args 0)) [] true]
             :screen-changed [(if (valid-rect? (get args 0))
-                               (d/assoc s {:screen (args 0)})
+                               (st/set-screen s (args 0))
                                s)
                              [] false]
             :windows-observed [(windows-observed s (get args 0)) [] true]

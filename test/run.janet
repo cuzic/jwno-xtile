@@ -11,4 +11,5 @@
 (import ./adapter-test)
 (import ./purity-test)
 (import ./property-test)
+(import ./core-v0-test)
 (t/run-all)

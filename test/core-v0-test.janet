@@ -1,0 +1,32 @@
+# ADR 0012 M-4 (stage 1a): with a single monitor the core behaves EXACTLY as before the multi-monitor work.
+# `test/reference/core-v0/` is a frozen copy of src/core/ taken before the accessor refactor (the core is pure and
+# imports only ./ files, so the copy loads as is). Random event sequences are fed to both; every :state and :effects
+# must be equal. When the representation changes (stage 1b) the comparison projects the state through the accessors.
+(use ./t)
+(import ../src/core/state :as st)
+(import ../src/core/update :as u)
+(import ./reference/core-v0/state :as st0)
+(import ./reference/core-v0/update :as u0)
+(import ./property-test :as pt)
+
+(defn- project
+  "A state as the old core sees it: the keys the old core had, current/screen read through the accessors."
+  [s]
+  (table/to-struct (merge (table ;(kvs s)) {:current (st/current s) :screen (st/screen s)})))
+
+(deftest "M-4: the new core and the frozen v0 core agree on every event of random sequences (single monitor)"
+  (for seed 0 120
+    (def rng (math/rng (+ 90000 seed)))
+    (def rules (pt/random-rules rng))
+    (var a (st/make (first pt/screens) pt/tags rules))
+    (var b (st0/make (first pt/screens) pt/tags rules))
+    (for step 0 120
+      (def e (pt/random-event rng))
+      (def ra (u/update a e))
+      (def rb (u0/update b e))
+      (unless (deep= (project (ra :state)) (project (rb :state)))
+        (errorf "M-4 state differs after %q (seed %d step %d)" e seed step))
+      (unless (deep= (ra :effects) (rb :effects))
+        (errorf "M-4 effects differ after %q: new=%q old=%q (seed %d step %d)" e (ra :effects) (rb :effects) seed step))
+      (set a (ra :state))
+      (set b (rb :state)))))

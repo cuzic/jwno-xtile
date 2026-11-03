@@ -123,3 +123,8 @@
   前面ロックで拒否されたとき（3 回で諦める）は正当に破れる。フェイク OS のプロパティテストで検査する（未実装）。
 - M4（Opus M4）最小化／全画面で `drop-hidden` された窓は、元のタグを `:hidden-from {id tag}` に覚え、同じ id が（タグ無しで）戻ったらその窓は元のワークスペースに戻る。明示のタグは優先する。
   OS が snapshot からその id を完全に失ったとき、`window-closed` のとき、再び現れたときに覚えを消す（id は再利用される）。
+
+## 複数モニタ（ADR 0012）
+- M-0（段階 1a、実装済み）`(s :current)`／`(s :screen)` の読み書きは `st/current`・`st/screen`・`st/set-current`・`st/set-screen` だけを通す。
+- M-4（実装済み）モニタが 1 つのとき、新しい Core は凍結した旧 Core（`test/reference/core-v0/`）と、全ての event の `:state`（`st/current`・`st/screen` で射影）と `:effects` が一致する（`test/core-v0-test.janet`）。
+- M-1〜M-3（段階 1b 以降）`:screens`／`:focused-screen` からの導出、各ワークスペースは高々 1 つのモニタ、`vis(s)` は全モニタの見えているワークスペースの窓の和集合。

@@ -31,7 +31,14 @@
 
 (defn ws-of [s tag] ((s :workspaces) tag))
 
-(defn current-ws [s] (ws-of s (s :current)))
+# ADR 0012 stage 1a: the visible workspace and the screen rect are read and written ONLY through these four
+# functions, so stage 1b can change the representation (:screens, :focused-screen) in one place.
+(defn current "tag of the workspace on the focused screen" [s] (s :current))
+(defn screen "work-area rect of the focused screen" [s] (s :screen))
+(defn set-current [s tag] (d/assoc s {:current tag}))
+(defn set-screen [s rect] (d/assoc s {:screen rect}))
+
+(defn current-ws [s] (ws-of s (current s)))
 
 (defn locate
   "Tag of the workspace that holds `id`, or nil."
@@ -41,7 +48,7 @@
 (defn update-ws [s tag f]
   (d/assoc s {:workspaces (d/assoc (s :workspaces) {tag (f ((s :workspaces) tag))})}))
 
-(defn update-current [s f] (update-ws s (s :current) f))
+(defn update-current [s f] (update-ws s (current s) f))
 
 (defn floating? [s id] (truthy? (get (s :floating) id)))
 
@@ -55,6 +62,6 @@
   [s]
   (def w (current-ws s))
   (table/to-struct
-    (from-pairs (layout/arrange (w :layout) w (s :screen) (tiled-ids s w)))))
+    (from-pairs (layout/arrange (w :layout) w (screen s) (tiled-ids s w)))))
 
 (defn focused [s] ((current-ws s) :focus))
