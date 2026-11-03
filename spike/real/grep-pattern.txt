@@ -1,1 +1,1 @@
-16060414|15602322|328348|9112736
+^[0-9.]+ (installed|started|config-start|ffi|jw32-has "IsHung)|window-created|more than one
