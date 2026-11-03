@@ -798,3 +798,34 @@
   (is= s0 ((u/update s0 [:screens-changed [{:device "A" :rect {:x 0}}]]) :state))
   (is= s0 ((u/update s0 [:screens-changed [mon-a mon-a]]) :state))          # a device twice
   (is= s0 ((u/update s0 [:screens-changed "x"]) :state)))
+
+# ---- ADR 0013: gap and padding through the core ----------------------------------------------------------------
+
+(deftest "gap/padding: set-gap and set-padding re-place the tiles; 0 removes the key; bad values are ignored"
+  (def [s _] (run (fresh) [:window-opened :a] [:window-opened :b]))
+  (def r (u/update s [:command :set-gap 10]))
+  (is= 10 ((r :state) :gap))
+  (is (find |(= (first $) :place) (r :effects)))                       # the tiles move
+  (def p ((r :state) :placements))
+  (is= s ((u/update (r :state) [:command :set-gap 0]) :state))         # back to exactly the same state
+  (is= s ((u/update s [:command :set-gap -3]) :state))
+  (is= s ((u/update s [:command :set-gap 1.5]) :state))
+  (is= s ((u/update s [:command :set-gap 9999]) :state))
+  (is= 11 (((u/update (r :state) [:command :inc-gap]) :state) :gap))
+  (is= 9 (((u/update (r :state) [:command :dec-gap]) :state) :gap))
+  (is (nil? (((u/update s [:command :dec-gap]) :state) :gap))))         # never below 0
+
+(deftest "gap/padding: a window dragged to exactly where the (spaced) layout put it does not float; window-moved agrees"
+  (def [s0 _] (run (fresh) [:window-opened :a] [:window-opened :b]))
+  (def s ((u/update ((u/update s0 [:command :set-gap 6]) :state) [:command :set-padding 12]) :state))
+  (def p (st/placements s))
+  (is (not (st/floating? ((u/update s [:window-dragged :a (p :a)]) :state) :a)))
+  (is= [] ((u/update s [:window-moved :a (p :a)]) :effects))            # what we placed is what we see: nothing to fix
+  (is (find |(= (first $) :place) ((u/update s [:window-moved :a (g/rect 0 0 5 5)]) :effects))))
+
+(deftest "gap/padding: every visible workspace of every screen is spaced inside its own screen"
+  (def s0 (st/make [(g/rect 0 0 1000 600) (g/rect 1000 0 1000 600)] ["1" "2" "3"] [] nil {:gap 8 :padding 10}))
+  (def [s _] (run s0 [:window-opened :a "1"] [:window-opened :b "1"] [:window-opened :c "2"] [:window-opened :d "2"]))
+  (def p (st/placements s))
+  (each id [:a :b] (is (and (>= ((p id) :x) 10) (<= (+ ((p id) :x) ((p id) :w)) 990))))
+  (each id [:c :d] (is (and (>= ((p id) :x) 1010) (<= (+ ((p id) :x) ((p id) :w)) 1990)))))

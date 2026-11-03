@@ -389,7 +389,7 @@
           (if (and (= (s :stray-mode) :follow) (not own))
             # the user chose a parked window: go to its workspace instead of pulling them back
             (let [tag (st/locate s os)]
-              [(-> s1
+              [(-> s                         # not s1: the goto ends the stray, so no try is counted (nothing left to clean up)
                    (st/set-current tag)
                    (d/assoc {:external-focus false})
                    (st/update-ws tag |(ws/focus-id $ os)))
@@ -402,11 +402,12 @@
 
 (def command-args
   "Every command the core understands -> what argument it takes
-  (:none | :tag | :layout | :screen). The keymap validates bindings against this."
+  (:none | :tag | :layout | :screen | :number). The keymap validates bindings against this."
   (struct
     ;(mapcat |[$ :none]
               [;(keys ws-commands) ;(keys reorder-commands) :close :refresh])
-    :goto :tag :view :tag :send :tag :focus-screen :screen :send-to-screen :screen :set-layout :layout :toggle-float :none
+    :goto :tag :view :tag :send :tag :focus-screen :screen :send-to-screen :screen
+    :set-gap :number :set-padding :number :inc-gap :none :dec-gap :none :set-layout :layout :toggle-float :none
     :reassert-focus :internal :reclaim-focus :internal))   # :internal = issued by the shell, never bound to a key
 
 (defn- own-stray
@@ -453,6 +454,16 @@
   (if-let [f (st/focused s)] [[:focus f]] []))
 
 # ---- ADR 0012 stage 2: screens ---------------------------------------------------------------------------------
+
+(def- max-spacing 200)
+
+(defn- set-spacing
+  "ADR 0013: gap or padding = n (an integer in 0..200; anything else is ignored). 0 removes the key, so the state is
+  exactly the one without spacing. The new rects reach the windows through the usual :place diff."
+  [s key n]
+  (if (and (int? n) (<= 0 n max-spacing))
+    (if (zero? n) (d/without s key) (d/assoc s {key n}))
+    s))
 
 (defn- valid-screen? [s i] (and (int? i) (<= 0 i) (< i (length (s :screens)))))
 
@@ -543,6 +554,11 @@
         [s []]))
 
     (= name :toggle-float) [(toggle-float s) []]
+
+    (= name :set-gap) [(set-spacing s :gap (get args 0)) []]
+    (= name :set-padding) [(set-spacing s :padding (get args 0)) []]
+    (= name :inc-gap) [(set-spacing s :gap (+ (get s :gap 0) 1)) []]
+    (= name :dec-gap) [(set-spacing s :gap (- (get s :gap 0) 1)) []]
 
     (= name :focus-screen) (focus-screen s (get args 0))
 

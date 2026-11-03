@@ -51,7 +51,7 @@
   (def km (k/build (k/default-bindings "Alt" tags) tags))
   (def bound (distinct (map |($ 1) (values (km :keys)))))
   (each name (keys u/command-args)
-    (unless (or (index-of name [:set-layout :shift-master :toggle-float :view])
+    (unless (or (index-of name [:set-layout :shift-master :toggle-float :view :set-gap :set-padding :inc-gap :dec-gap])
                 (= :internal (u/command-args name)))
       (is (index-of name bound)))))
 

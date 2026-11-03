@@ -80,7 +80,7 @@
 
 (defn random-event [rng]
   (def id (keyword "w" (math/rng-int rng 12)))
-  (case (math/rng-int rng 27)
+  (case (math/rng-int rng 28)
     0 [:window-opened id]
     1 [:window-opened id (pick rng tags)]
     2 [:window-opened id "bogus"]
@@ -90,6 +90,8 @@
     6 [:desktop-changed (pick rng [;tags "bogus"])]
     7 [:screen-changed (pick rng screens)]
     8 [:window-moved id (g/rect (math/rng-int rng 50) 0 100 100)]
+    24 (pick rng [[:command :set-gap (math/rng-int rng 15)] [:command :set-padding (math/rng-int rng 20)]
+                  [:command :inc-gap] [:command :dec-gap] [:command :set-gap -1] [:command :set-gap 1.5]])
     21 [:command :focus-screen (math/rng-int rng 3)]
     22 [:command :send-to-screen (math/rng-int rng 3)]
     23 (pick rng [[:screens-changed [{:device "A" :rect (g/rect 0 0 1000 600)}]]
@@ -182,7 +184,9 @@
     (def w (st/ws-of s (scr :ws)))
     (def rect (scr :rect))
     (def stripped (reduce |(ws/remove $0 $1) w (filter |(st/floating? s $) (w :ids))))
-    (def mine (table/to-struct (from-pairs (layout/arrange (w :layout) w rect (stripped :ids)))))
+    (def mine (table/to-struct (from-pairs (layout/arrange-spaced (w :layout) w rect (stripped :ids)
+                                                                  (st/clamp-spacing (get s :gap 0) rect)
+                                                                  (st/clamp-spacing (get s :padding 0) rect)))))
     (each id (st/tiled-ids s w)
       (unless (= (mine id) (p id))
         (errorf "F7 placement of %q differs from the float-free workspace after %q" id event)))
@@ -194,7 +198,8 @@
                    (pos? (r :w)) (pos? (r :h)))
         (errorf "I6 rect out of bounds after %q: %q in %q" event r rect)))
     (unless (= (w :layout) :full)
-      (unless (empty? rs)
+      # I7 (ADR 0013 G-4): the tiles cover the screen exactly only without gap and padding
+      (unless (or (empty? rs) (get s :gap) (get s :padding))
         (unless (= (sum (map g/area rs)) (g/area rect))
           (errorf "I7 tiling does not cover screen after %q" event)))
       (for i 0 (length rs)
@@ -457,8 +462,11 @@
     (unless (and (= (get event 1) (old :os-focus)) (old :os-focus))
       (errorf "E10 window-opened/seen cleared external without an observation: %q" event)))
   # E10: external focus is cleared only by observations of OS focus
+  # (ADR 0006 D-7e: :follow turns the observation "the OS focus rests on a window of a hidden workspace" into a goto,
+  # which adopts that window: the observation is what clears external, `:reclaim-focus` only acts on it)
   (when (and (old :external-focus) (non-focus-observation (get event 0))
-             (not ((r :state) :external-focus)))
+             (not ((r :state) :external-focus))
+             (not (and (= event [:command :reclaim-focus]) (= (old :stray-mode) :follow))))
     (errorf "E10 external focus cleared by a non-observation: %q" event))
   # E11: while external, no :focus is derived unless the user asked for one
   # (ADR 0006 D-7d: or the OS focus rests on a parked window -- that is not a window the user chose to be in)

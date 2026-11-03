@@ -36,7 +36,7 @@
                (cond
                  (= (get e 1) :view) [:command :goto (get e 2)]
                  # new in ADR 0012 stage 2: the frozen core would ignore them
-                 (or (= (get e 0) :screens-changed) (index-of (get e 1) [:focus-screen :send-to-screen])) [:command :refresh]
+                 (or (= (get e 0) :screens-changed) (index-of (get e 1) [:focus-screen :send-to-screen :set-gap :set-padding :inc-gap :dec-gap])) [:command :refresh]
                  e)))
       (def ra (u/update a e))
       (def rb (u0/update b e))

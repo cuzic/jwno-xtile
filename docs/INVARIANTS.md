@@ -133,3 +133,9 @@
 - 判定の書き換え（ADR 0012 の表）: `stray-id`・`window-dragged`・`open-window` の採用・`windows-observed` の採用・`window-surfaced` は「どれかのモニタに見えているか」で判定する。`focus-window` は、見えている窓なら
   `:focused-screen` をその窓のモニタへ移し、external を下ろす。`goto` は `greedyView`（見えていれば入れ替え）、`:view` は見えているモニタへフォーカスを移すだけ。`[:focus-none]` は「フォーカスのあるモニタのワークスペースが空」のとき（F12d の改訂）。
 - 2 モニタの state は、プロパティテストの生成器の 3 分の 1 に入る（`test/property-test.janet`）。
+
+## gap と padding（ADR 0013）
+- G-1 gap = padding = 0 のとき、`placements` は xmonad の `arrange` と完全に同一（凍結した旧 Core との差分テストの対象）。
+- G-2 全ての矩形は padding で縮めた画面の中にあり、`pos?`、互いに重ならない（Full を除く）。G-3 隣接するタイルの間の距離は `gap`（縮め切れない小さい矩形を除く）。
+- G-4 I7（隙間なく覆う）は gap = padding = 0 のときだけ成り立つ。縮め方: `inner` の境界上にない辺だけ、左・上は `ceil(gap/2)`、右・下は `floor(gap/2)`。逆変換（辺を戻す）は `arrange inner` に一致する（F7 の書き換え）。
+- 設定: State の `:gap`／`:padding`（0 はキーを置かない）。`set-gap`／`set-padding`／`inc-gap`／`dec-gap` は 0〜200 の整数だけを受け、モニタごとに `min(w,h)/8` へ丸める。

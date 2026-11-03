@@ -51,6 +51,7 @@
         :none (if (empty? args) nil "takes no argument")
         :tag (if (and (= 1 (length args)) (index-of arg tags)) nil (string "needs one of the workspace tags, got " arg))
         :layout (if (and (= 1 (length args)) (index-of arg layout/layouts)) nil (string "needs a layout, got " arg))
+        :number (if (and (= 1 (length args)) (number? arg)) nil (string "needs a number, got " arg))
         :screen (if (and (= 1 (length args)) (int? arg) (<= 0 arg 8)) nil (string "needs a screen number 0..8, got " arg))
         :internal (string name " is issued by the shell and cannot be bound")
         (string "unsupported argument kind " want)))))

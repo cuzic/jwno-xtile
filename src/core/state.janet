@@ -15,8 +15,9 @@
 
 (defn make
   "`screen` is one work-area rect (a single monitor) or a list of rects (ADR 0012: one per monitor, in display
-  order; the first tags are shown on them in order, as xmonad does)."
-  [screen tags &opt rules stray-mode]
+  order; the first tags are shown on them in order, as xmonad does). `opts` (ADR 0013): {:gap n :padding n}; a 0
+  is not stored (so the state is exactly the one without spacing)."
+  [screen tags &opt rules stray-mode opts]
   (default rules [])
   (assert (index-of stray-mode [nil :return :follow]) "stray-mode must be :return or :follow")
   (assert (and (indexed? rules) (all classify/valid-rule? rules))
@@ -34,7 +35,13 @@
    :floating {}
    :workspaces (struct ;(mapcat |[$ (ws/make $)] tags))})
   # ADR 0006 D-7e: what to do when the OS focus rests on a parked window (default :return)
-  (if (= stray-mode :follow) (d/assoc base {:stray-mode :follow}) base))
+  (def b2 (if (= stray-mode :follow) (d/assoc base {:stray-mode :follow}) base))
+  (def gap (get opts :gap 0))
+  (def padding (get opts :padding 0))
+  (assert (and (int? gap) (<= 0 gap) (int? padding) (<= 0 padding)) "gap and padding are non-negative integers")
+  (-> b2
+      (|(if (pos? gap) (d/assoc $ {:gap gap}) $))
+      (|(if (pos? padding) (d/assoc $ {:padding padding}) $))))
 
 (defn ws-of [s tag] ((s :workspaces) tag))
 
@@ -99,15 +106,24 @@
 (defn vis-ids "ids of every window on a visible workspace (all screens)" [s]
   (mapcat |((ws-of s $) :ids) (visible-tags s)))
 
+(defn clamp-spacing
+  "ADR 0013: a gap or padding never exceeds min(w,h)/8 of the screen it is applied to."
+  [n rect]
+  (min n (div (min (rect :w) (rect :h)) 8)))
+
 (defn placements
-  "{id rect} for every tiled window on a visible workspace (never a float), each in its own screen's rect.
+  "{id rect} for every tiled window on a visible workspace (never a float), each in its own screen's rect, with the
+  gap between tiles and the padding round the screen (ADR 0013; 0 = exactly the xmonad layout).
   Needs I1 (a window is in exactly one workspace): with a duplicate the later one would win."
   [s]
   (table/to-struct
     (from-pairs
       (mapcat (fn [scr]
                 (def w (ws-of s (scr :ws)))
-                (layout/arrange (w :layout) w (scr :rect) (tiled-ids s w)))
+                (def rect (scr :rect))
+                (layout/arrange-spaced (w :layout) w rect (tiled-ids s w)
+                                       (clamp-spacing (get s :gap 0) rect)
+                                       (clamp-spacing (get s :padding 0) rect)))
               (s :screens)))))
 
 (defn focused [s] ((current-ws s) :focus))
