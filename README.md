@@ -2,7 +2,7 @@
 
 xmonad-style tiling for [Jwno](https://github.com/agent-kilo/jwno) on Windows (MIT).
 
-- Master/stack tiling (Tall, Wide, Full) that follows xmonad's `StackSet`, floats, workspaces, several monitors.
+- Master/stack tiling (Tall, Wide, Full) that follows xmonad's `StackSet`, floats, workspaces, several monitors (opt in, unverified on real hardware).
 - A pure Janet **core** (`src/core/`, fully tested, no I/O) decides everything; a thin adapter (`src/jwno/`) turns Jwno's
   hooks into events and carries out the core's effects. See `docs/DESIGN.md` and the decisions in `docs/adr/`.
 - Workspaces are groups inside the window manager, not Windows virtual desktops: a window of another workspace is moved
@@ -15,7 +15,7 @@ real hardware* (several monitors, IME with the focus sink window, drag detection
 ## Use
 
 1. Install [Jwno](https://github.com/agent-kilo/jwno) (0.9.16 was used) and clone this repository.
-2. Copy `jwno-config.example.janet` to your Jwno config, set `--mod-path` to the clone (or copy `src/`), restart Jwno.
+2. Copy `jwno-config.example.janet` to your Jwno config, start Jwno with `--mod-path` pointing at the clone, e.g. `jwno.exe --mod-path C:\path\to\jwno-xtile --config C:\path\to\your-config.janet` (or copy `src/` next to the config), restart Jwno.
 3. Keys, commands and options: [`docs/USAGE.md`](docs/USAGE.md).
 
 ## Develop

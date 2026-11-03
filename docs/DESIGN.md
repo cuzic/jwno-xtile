@@ -46,7 +46,7 @@ Window ids are opaque to the core (the shell uses hwnd numbers). Rects are
   The runtime schedules `:reclaim-focus` (at most 3 tries per window) when a focus change left the focus on a
   parked window.
 - **Jwno manages only the focused window at start** (found on a real PC), so the adapter offers every other
-  top-level window of the desktop to Jwno at start (`adopt-existing!`), except maximised windows and windows of
+  top-level window of the desktop to Jwno at start (`adopt-existing!`), re-maximising the maximised ones, and (unless `:multi-monitor?`) leaving windows of
   other monitors. See `docs/spike/2026-11-01-real-machine.md`.
 
 - **Core outputs rects, not Jwno Frame operations.** Frame splitting is Jwno
@@ -84,11 +84,10 @@ Run: `mise run test`. Invariants: `docs/INVARIANTS.md`. Decisions: `docs/adr/`.
 
 ## Not done yet (ordered)
 
-1. Gaps/padding, `Full` raising the focused window (shell detail).
-2. Multi-monitor (screens list; per-screen current workspace).
-3. Verify on a real desktop: drag detection, the sink window (IME, Narrator, foreground lock), adopt-existing! on
+1. Multi-monitor stage 3 in the adapter: floats moving between monitors with their workspace (ADR 0012).
+2. Verify on a real desktop: drag detection, the sink window (IME, Narrator, foreground lock), adopt-existing! on
    a busy desktop, `:sw-hide` (opt-in, not built).
-4. Open review items: ADR 0006 / docs/references/jwno-ecosystem.md (J4: why `desktop-name-changed` is missed on a
+3. Open review items: ADR 0006 / docs/references/jwno-ecosystem.md (J4: why `desktop-name-changed` is missed on a
    new virtual desktop).
 
 ## Risks to spike on Windows

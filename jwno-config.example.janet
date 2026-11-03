@@ -1,10 +1,9 @@
-# Example Jwno config for jwno-xtile (ADR 0010, stage 1). UNVERIFIED ON WINDOWS.
+# Example Jwno config for jwno-xtile (ADR 0010).
 #
-#   jwno.exe --config jwno-config.example.janet
+#   jwno.exe --mod-path C:\path\to\jwno-xtile --config C:\path\to\jwno-xtile\jwno-config.example.janet
 #
-# Modules are searched in this file's directory first (Jwno docs: "Using Modules"), so the
-# repository root is the module root. Whether `src/...` resolves from here is checked by the
-# stage-2 contract test.
+# `--mod-path` makes the repository root the module root, so `src/...` resolves (verified on hosted Windows
+# and one real Windows 11 PC). Copying `src/` next to this file also works.
 #
 # What this does:  Core decides layout and focus; Jwno only reports windows and moves them where
 # the core says. Jwno's own placement is switched off per window (swp-flags), and Jwno's own frame
@@ -36,11 +35,15 @@
      :rules [{:match {:class "#32770"} :action :float}]
      :poll-seconds 2
      # Space between tiles and round the screen, in pixels (ADR 0013). 0 = no spacing, exactly xmonad's layout.
-     :gap 8
-     :padding 8
+     # :gap 8
+     # :padding 8
      # Take the taskbar button of a window of another workspace away (it is parked off-screen but still a window).
-     # ITaskbarList::DeleteTab through Janet's FFI; verified on one Windows 11 desktop (ADR 0011). The window stays in Alt-Tab.
-     :hide-taskbar-button true}))
+     # ITaskbarList::DeleteTab through Janet's FFI; verified on one Windows 11 desktop (ADR 0011), UNVERIFIED with
+     # several Windows virtual desktops. The window stays in Alt-Tab. Off by default.
+     # :hide-taskbar-button true
+     # Several monitors (opt in, unverified on real hardware). Off: only the main monitor is managed.
+     # :multi-monitor? true
+     }))
 
 (:set-keymap key-man keymap)
 

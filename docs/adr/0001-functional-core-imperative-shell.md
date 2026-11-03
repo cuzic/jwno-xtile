@@ -1,6 +1,6 @@
 # 0001. Functional Core / Imperative Shell を採用し、WM 状態の判断はすべて Core に置く
 
-- 状態: Accepted（Opus レビュー 5 回で収束、2026-10-31。Shell 側の実装・実機検証は未了）
+- 状態: Accepted（Opus レビュー 5 回で収束、2026-10-31。Shell 側は実装済み、ホスト型 Windows と実機で検証済み）
 - 日付: 2026-10-31
 
 ## Context

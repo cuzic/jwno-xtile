@@ -1,6 +1,6 @@
 # 0005. 観測原則・effect の実行規約・実画面とのずれの回復
 
-- 状態: Accepted（Opus レビュー 5 回で収束、2026-10-31。Core 側は実装・検証済み。Shell 規約 1〜7 は未実装・Windows 未検証）
+- 状態: Accepted（Opus レビュー 5 回で収束、2026-10-31。Core 側は実装・検証済み。Shell 規約 1〜7 は runtime とアダプタで実装済み、ホスト型 Windows で検証済み）
 - 日付: 2026-10-31
 
 ## Context

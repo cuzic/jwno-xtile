@@ -15,6 +15,9 @@
 #   [:place id rect]  [:focus id]  [:close id]
 #   [:goto tag]       [:send id tag]
 #   [:hide id] [:show id]   (ADR 0006: derived from which workspace is visible)
+#   [:focus id :reclaim]    (ADR 0006 D-7: take the focus back from a parked window; tagged so it is retried, max 3)
+#   [:focus-none]           (ADR 0006 D-7: nothing to focus; the shell parks the focus on its sink window)
+#   [:notify ...]           (a message for the user, no state change)
 #
 # :place / :focus effects are derived by diffing old and new state, so the
 # transitions below never mention them.
@@ -32,7 +35,8 @@
 #    cleared ONLY by observations (an observed focus, or a window-opened for
 #    the very id last observed as OS focus). While set, no :focus is derived
 #    (we never steal focus from a dialog).
-#  * :current changes only on :desktop-changed or the :goto command.
+#  * the visible workspace of a screen changes on :goto/:view/:send-to-screen/:focus-screen, on :desktop-changed, on an
+#    observed focus (the focused screen moves to the window's screen) and with `:follow` (ADR 0012).
 #
 # Recovery from drift: [:command :refresh] re-emits every :place (and :focus
 # when not external); [:window-moved id rect] re-places one window unless the

@@ -1,6 +1,6 @@
 # 0008. ウィンドウの振り分け（tile / float / ignore）とフロート管理
 
-- 状態: Proposed（Accepted（改訂 4。Opus レビュー 3 回で収束、2026-10-31。Core は実装・検証済み（F1〜F11 のプロパティ、X1 拡張を除く）。Shell 規約は Windows 未検証））
+- 状態: Accepted（改訂 4。Opus レビュー 3 回で収束、2026-10-31。Core は実装・検証済み（F1〜F11 のプロパティ、X1 拡張を除く）。Shell 規約はホスト型 Windows で検証済み）
 - 日付: 2026-10-31
 
 ## Context

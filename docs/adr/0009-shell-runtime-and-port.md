@@ -1,6 +1,6 @@
 # 0009. Shell は「ポート越しの実行系」と「Jwno アダプタ」に分け、前者を先に作る
 
-- 状態: Accepted（改訂 5: 緩和策は A を主・C を補助とする暫定の決定。Opus レビュー 4 回で収束、2026-10-31。runtime（R-10 を含む）と Core の `:pending-focus`/`:reassert-focus` は実装済みで、フェイク OS とプロパティで検査済み。Jwno アダプタ（A-1〜A-4）は未実装。Windows 未検証）
+- 状態: Accepted（改訂 5: 緩和策は A を主・C を補助とする暫定の決定。Opus レビュー 4 回で収束、2026-10-31。runtime（R-10 を含む）と Core の `:pending-focus`/`:reassert-focus` は実装済みで、フェイク OS とプロパティで検査済み。Jwno アダプタ（A-1〜A-4）は実装済み（ADR 0010））
 - 日付: 2026-10-31
 
 ## Context

@@ -12,6 +12,10 @@ not verified on a real desktop is marked **(unverified)**.
 - `goto` (Alt+N) is xmonad's `greedyView`: if the workspace is shown on another monitor the two monitors swap.
 
 ## Default keys (`Alt`; change `"Alt"` to `"Win"` in the config for the Win key)
+**Alt as the modifier overrides Windows' own Alt+Tab, Alt+Space (window menu; Alt+Space, M moves a window with the keyboard) and
+the Alt menu accelerators of many apps (Alt+H help, Alt+E edit, ...), and Alt+Enter in consoles (unverified).** Use `"Win"` if
+that matters to you.
+
 | Key | Command | Meaning |
 |---|---|---|
 | Alt+J / Alt+K, Alt+Tab / Alt+Shift+Tab | `focus-next` / `focus-prev` | move the focus along the stack |
@@ -45,17 +49,27 @@ focus is on something the manager does not manage (a dialog, the Start menu) it 
 | `:poll-seconds` | 2 | how often the adapter compares what Windows shows with what it placed (minimise, maximise, ...) |
 | `:stray-mode` | `:return` | what to do when the focus ends up on a window of a hidden workspace (taskbar, Alt-Tab): `:return` pulls it back to the visible workspace, `:follow` goes to that workspace |
 | `:hide-taskbar-button` | false | take the taskbar button of a parked window away (ITaskbarList through Janet's FFI; verified on one Windows 11 PC, ADR 0011) |
-| `:multi-monitor?` | false | one screen per monitor (ADR 0012) **(unverified on real multi-monitor hardware)** |
+| `:multi-monitor?` | false | one screen per monitor (ADR 0012) **(unverified on real multi-monitor hardware)**. Off: only the main monitor is managed and windows of other monitors are left alone |
+| `:log` | none | `(fn [level msg])` for the adapter's log lines |
+| `:suppress-focus?`, `:watch-moves?`, `:verify-placements?`, `:reassert?`, `:clock` | internal | switches used by the tests; leave them alone |
 
 ## What to expect
 - **Workspaces are not Windows virtual desktops.** Only the *current* Windows virtual desktop is managed; switching desktops
-  switches which windows the manager sees.
-- **Parked windows stay in the taskbar and Alt-Tab** (unless `:hide-taskbar-button`; Alt-Tab always keeps them). Choosing one
+  switches which windows the manager sees. After switching away and back, the windows of other workspaces are gathered on the
+  current workspace (the assignment is not kept). Several virtual desktops together with `:hide-taskbar-button` are
+  **unverified on a real PC**.
+- **Full-screen windows and windows matched by an `:ignore` rule belong to no workspace**; `goto` leaves them where they are.
+- **A window that keeps coming back** after being parked (some apps refuse to stay off-screen) becomes a float of the
+  current workspace instead of being fought over.
+- **A minimised window that you restore** returns to its own workspace, unless you activated it yourself (then it comes to the
+  current workspace).
+- **Floats do not follow a workspace to another monitor** (several monitors; unverified).
+- **Parked windows stay in the taskbar and Windows' Alt-Tab** (unless `:hide-taskbar-button`; Alt-Tab always keeps them; with Alt as the modifier the manager's own Alt+Tab replaces Windows' one). Choosing one
   gets you pulled back to the visible workspace (or taken to its workspace with `:stray-mode :follow`).
 - **The focus goes to a small invisible "sink" window** when the visible workspace is empty, so what you type goes nowhere
   (Jwno's own key bindings still work there). **(IME / screen readers: unverified)**
 - **A window that does not fit** (apps have a minimum size) is re-placed up to three times, then left alone.
-- **At start** the manager takes in the windows that already exist (except maximised ones and ones outside every monitor).
+- **At start** the manager takes in the windows that already exist (maximised ones are re-maximised after being placed; windows outside the main monitor are left alone unless `:multi-monitor?`).
 - If the manager stops, every parked window is brought back; if it was killed, the next start puts off-screen windows back.
 
 ## Troubleshooting

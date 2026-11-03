@@ -1,6 +1,6 @@
 # 0010. Jwno アダプタ: ポートの実装、フック→event の変換、Jwno との分担
 
-- 状態: Accepted（改訂 4: Opus レビュー 3 回で収束、2026-10-31。段階 1 の実装を、フェイクと**ホスト型 Windows Server 上の契約テスト 21 項目**（`spike/run-contract.ps1`、すべて PASS）で検査済み。実機（Windows 10/11）は未検証）
+- 状態: Accepted（改訂 4: Opus レビュー 3 回で収束、2026-10-31。段階 1 の実装を、フェイクと**ホスト型 Windows Server 上の契約テスト 21 項目**（`spike/run-contract.ps1`、すべて PASS）で検査済み。その後 52 項目に増え、実機（Windows 11）でも基本動作を確認。Windows 10 は未検証）
 - 日付: 2026-10-31
 
 ## Context

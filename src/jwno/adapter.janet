@@ -88,12 +88,33 @@
           (put num->hwnd n root)
           n))))
 
+  (def parked @{})   # id -> {:rect where it was :at where we put it ...}; OS-boundary memory, not WM state
+  (defn protect-val [f] (let [r (protect (f))] (when (r 0) (r 1))))
+
+  (defn current-vd-guid
+    "Desktop id of the current virtual desktop, read from a window we know that is on it and answers (a parked one
+    may not). nil when there is none."
+    []
+    (var found nil)
+    (each [id hwnd] (pairs num->hwnd)
+      (when (and (nil? found) (nil? (get parked id)) (get win32 :desktop-guid))
+        (when (protect-val (fn [] (w :on-current-desktop? hwnd)))
+          (set found (protect-val (fn [] ((get win32 :desktop-guid) hwnd)))))))
+    found)
+
   (defn on-current-desktop?
     "A window on another Windows virtual desktop is not ours. We ask Windows itself, per window:
     Jwno's `last-vd` is not comparable to a window's desktop id at start (contract test CT-3)."
     [hwnd]
     (def [ok here] (protect (w :on-current-desktop? hwnd)))
-    (or (not ok) here))
+    # OV-H1: a window whose taskbar button we deleted (parked) answers "unknown" to Windows. Judge it by the desktop
+    # recorded at park time against the desktop of a window that does answer.
+    (def n (protect-val (fn [] (when-let [r (w :root-of hwnd)] (w :hwnd->number r)))))
+    (def p (and n (get parked n)))
+    (if (and p (p :vd))
+      (let [cur (current-vd-guid)]
+        (if cur (= cur (p :vd)) (or (not ok) here)))
+      (or (not ok) here)))
 
   (defn window-of [id]
     (def hwnd (get num->hwnd id))
@@ -112,8 +133,6 @@
     (if ok ds @[]))
 
   # ---- parking: a window of another workspace is moved off-screen and remembered ----------
-  (def parked @{})   # id -> {:rect where it was :at where we put it ...}; OS-boundary memory, not WM state
-  (defn protect-val [f] (let [r (protect (f))] (when (r 0) (r 1))))
   (def gave-up @{})  # ids we stopped parking after `repark-limit` tries; cleared by a place/show or the window's end
 
   # ADR 0011 stage 0: ITaskbarList::DeleteTab makes IVirtualDesktopManager::GetWindowDesktopId fail for the window.
@@ -616,16 +635,16 @@
     (def mapped (case (string/ascii-lower last-part) "comma" "," "period" "." last-part))
     (string/join [;(slice parts 0 (- (length parts) 1)) mapped] " + "))
 
+  # OV-L1/L2: the command exists with or without a :keymap (`jwno.exe -x ":xtile :view 2"`)
+  (:add-command (in context :command-manager) :xtile
+                (fn [& args]
+                  # a workspace tag is a string in the core, but a bare number is much easier to type
+                  (def [name & rest] args)
+                  (def rest* (if (index-of name [:goto :send :view])
+                               (map |(if (number? $) (string $) $) rest)
+                               rest))
+                  (dispatch! [:command name ;rest*])))
   (when-let [keymap (opts :keymap)]
-    (:add-command (in context :command-manager) :xtile
-                  (fn [& args]
-                    # `jwno.exe -x ":xtile :goto 2"`: a workspace tag is a string in the core, but a bare
-                    # number is much easier to type (and to quote) on a command line
-                    (def [name & rest] args)
-                    (def rest* (if (index-of name [:goto :send])
-                                 (map |(if (number? $) (string $) $) rest)
-                                 rest))
-                    (dispatch! [:command name ;rest*])))
     (each b (get opts :bindings [])
       (def built (km/build [b] tags))
       (if (empty? (built :errors))
@@ -682,6 +701,12 @@
                 (when (and zoomed (get win32 :maximize)) ((get win32 :maximize) hwnd)))))))
       (unless ok (log-fn :debug (string "adopt-existing: " err)))))
 
+  (defn recover-tab
+    "OV-M1: DeleteTab is Explorer's state and outlives a crashed run: give the button back (harmless if present)."
+    [hwnd]
+    (when (get win32 :taskbar-add-tab)
+      (protect ((get win32 :taskbar-add-tab) hwnd))))
+
   (defn recover-strays
     "A previous run may have died with windows parked off-screen: bring them back."
     []
@@ -695,6 +720,7 @@
             (let [r (w :window-rect hwnd)]
               (when (and r (< (r :left) (+ park-x 2000)) (not (w :minimized? hwnd)) (not (sink-number? hwnd)))
                 (log-fn :info (string/format "recovering unmanaged window found off-screen at %q" r))
+                (recover-tab hwnd)
                 (:transform-hwnd wm hwnd
                                  {:left (wa :x) :top (wa :y)
                                   :right (+ (wa :x) (min (- (r :right) (r :left)) (wa :w)))
@@ -708,6 +734,7 @@
                 id (norm (in win :hwnd))]
             (when (and id (not (get parked id)) (< (rect :x) (+ park-x 2000)))
               (log-fn :info (string/format "recovering window %q found off-screen at %q" id rect))
+              (recover-tab (in win :hwnd))
               (move-to win {:x (wa :x) :y (wa :y) :w (min (rect :w) (wa :w)) :h (min (rect :h) (wa :h))})))))
       (unless ok (log-fn :warn (string "recover: " err)))))
 
