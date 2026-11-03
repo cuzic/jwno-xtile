@@ -415,6 +415,10 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Chord 0x44   # Win+Ctrl+D: new desktop 2, switch to it
   $gone = WaitFor { -not (Has $i0) -and -not (Has $i2) } 8
   Check "CT-12a" ($(if ($gone) { "PASS" } else { "FAIL" })) "on a new Windows desktop the previous desktop's windows are no longer managed" ("ids in core: " + (((State).windows | ForEach-Object { $_.id }) -join ","))
+  # OV-H1: workspace 2's windows (i1, i7) are parked with their taskbar buttons deleted; Windows cannot say which desktop they
+  # are on, yet they must not be taken for windows of THIS desktop
+  Start-Sleep 3
+  Check "CT-12a2" ($(if (-not (Has $i1) -and -not (Has $i7)) { "PASS" } else { "FAIL" })) "parked windows (taskbar button deleted) of desktop 1 are not managed on desktop 2" ("ids in core: " + (((State).windows | ForEach-Object { $_.id }) -join ","))
   $N3 = Launch; $i3 = Id $N3
   $ok = WaitFor { (Has $i3) } 10
   Check "CT-12b" ($(if ($ok) { "PASS" } else { "FAIL" })) "a window opened on that desktop is managed" ("win=" + ((Win $i3) | ConvertTo-Json -Compress))
@@ -422,6 +426,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Chord 0x25   # Win+Ctrl+Left: back to desktop 1
   $ok = WaitFor { (Has $i0) -and (Has $i2) -and (-not (Has $i3)) } 10
   Check "CT-12c" ($(if ($ok) { "PASS" } else { "FAIL" })) "back on desktop 1 its windows are managed again, desktop 2's is not" ("ids in core: " + (((State).windows | ForEach-Object { $_.id }) -join ","))
+  Check "CT-12c2" ($(if ((Has $i1) -and (Has $i7)) { "PASS" } else { "INFO" })) "... and the windows parked on workspace 2 are managed again" ("ids in core: " + (((State).windows | ForEach-Object { $_.id }) -join ","))
   Start-Sleep 2
   $leaf2 = Count 'leaf-set-focus-to-hwnd'; $supp2 = Count 'suppressed Jwno'; $pf2 = Count 'port-focus'
   $own = $leaf2 - $leaf1 - ($pf2 - $pf1)
