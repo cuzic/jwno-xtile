@@ -35,6 +35,9 @@
      # user rules for the tile / float / ignore decision (ADR 0008)
      :rules [{:match {:class "#32770"} :action :float}]
      :poll-seconds 2
+     # Space between tiles and round the screen, in pixels (ADR 0013). 0 = no spacing, exactly xmonad's layout.
+     :gap 8
+     :padding 8
      # Take the taskbar button of a window of another workspace away (it is parked off-screen but still a window).
      # ITaskbarList::DeleteTab through Janet's FFI; verified on one Windows 11 desktop (ADR 0011). The window stays in Alt-Tab.
      :hide-taskbar-button true}))

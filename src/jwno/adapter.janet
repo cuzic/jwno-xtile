@@ -17,6 +17,8 @@
 #   :swp-nomove-nosize         -> int               SWP_NOMOVE|SWP_NOSIZE
 #
 # opts: :tags :rules :poll-seconds (nil = off) :reassert? (default false) :log :spawn :later
+#       :gap :padding (ADR 0013, pixels) :stray-mode (:return | :follow, ADR 0006 D-7e) :multi-monitor? (ADR 0012)
+#       :hide-taskbar-button (ADR 0011 stage 0)
 #       :suppress-focus? (A, default true) :keymap :bindings
 #
 # Rules this file keeps (each is a review finding of ADR 0010):
@@ -356,7 +358,9 @@
       :reassert? (get opts :reassert? false)})   # R-10 answered a Jwno refocus after an OS desktop switch; :goto no longer causes one
 
   # ---- core state + runtime ---------------------------------------------------------------
-  (set rtm (rt/make ctx (st/make (if multi? (map |($ :rect) (monitors)) (work-area)) tags (get opts :rules []))))
+  (set rtm (rt/make ctx (st/make (if multi? (map |($ :rect) (monitors)) (work-area)) tags (get opts :rules [])
+                                 (get opts :stray-mode)                      # ADR 0006 D-7e: :return (default) or :follow
+                                 {:gap (get opts :gap 0) :padding (get opts :padding 0)})))     # ADR 0013
 
   # ---- Jwno must not place windows itself (ADR 0010 D2) ------------------------------------
   (defn pin! [win] (put (in win :tags) :swp-flags swp))

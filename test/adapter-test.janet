@@ -1191,3 +1191,14 @@
   (def s (state-of a))
   (is= "1" (st/locate s 5))
   (is= "2" (st/locate s 6)))
+
+(deftest "ADR 0013 / 0006: :gap, :padding and :stray-mode reach the core from the adapter's options"
+  (def w (fake-world))
+  (def a (install-adapter w {:gap 6 :padding 10 :stray-mode :follow}))
+  (def s (state-of a))
+  (is= 6 (s :gap))
+  (is= 10 (s :padding))
+  (is= :follow (s :stray-mode))
+  (def a0 (install-adapter (fake-world)))
+  (is (nil? ((state-of a0) :gap)))
+  (is (nil? ((state-of a0) :padding))))

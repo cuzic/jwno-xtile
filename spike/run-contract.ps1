@@ -388,6 +388,28 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Check "CT-24b" ($(if ($tadd.Count -gt 0) { "PASS" } else { "FAIL" })) "... and given back when the window returns (AddTab returned S_OK)" ("ok=" + $tadd.Count)
   Start-Sleep 2
 
+  # ---- gap and padding (ADR 0013): the visible frame follows the spaced layout, and 0 puts everything back ----
+  [void](Cmd ":xtile :set-gap 12"); [void](Cmd ":xtile :set-padding 20")
+  Start-Sleep 3
+  $sg = State
+  $worstG = 0; $diffsG = @()
+  foreach ($wn in @($sg.windows | Where-Object { $_.rect -and -not $_.floating })) {
+    $fr = Frame ([IntPtr]::new([int64]$wn.id))
+    $dd = 0; for ($k = 0; $k -lt 4; $k++) { $dd = [math]::Max($dd, [math]::Abs($fr[$k] - $wn.rect[$k])) }
+    $worstG = [math]::Max($worstG, $dd)
+    $diffsG += ("{0}: core=[{1}] actual=[{2}]" -f $wn.id, ($wn.rect -join ","), ($fr -join ","))
+  }
+  Check "CT-25a" ($(if ($worstG -le 1 -and $diffsG.Count -gt 0) { "PASS" } else { "FAIL" })) "with gap 12 and padding 20 each tile's visible frame is on the core's spaced rect (worst diff $worstG px)" ($diffsG -join " | ")
+  [void](Cmd ":xtile :set-gap 0"); [void](Cmd ":xtile :set-padding 0")
+  Start-Sleep 3
+  $sg0 = State
+  $worst0 = 0
+  foreach ($wn in @($sg0.windows | Where-Object { $_.rect -and -not $_.floating })) {
+    $fr = Frame ([IntPtr]::new([int64]$wn.id))
+    for ($k = 0; $k -lt 4; $k++) { $worst0 = [math]::Max($worst0, [math]::Abs($fr[$k] - $wn.rect[$k])) }
+  }
+  Check "CT-25b" ($(if ($worst0 -le 1) { "PASS" } else { "FAIL" })) "gap and padding 0 put the tiles back flush (worst diff $worst0 px)" ""
+
   # ---- virtual desktops (ADR 0006 D-4): only the current Windows desktop is managed ----
   Focus $h2; Start-Sleep 1
   Chord 0x44   # Win+Ctrl+D: new desktop 2, switch to it
