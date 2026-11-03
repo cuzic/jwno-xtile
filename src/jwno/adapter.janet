@@ -91,15 +91,16 @@
   (def parked @{})   # id -> {:rect where it was :at where we put it ...}; OS-boundary memory, not WM state
   (defn protect-val [f] (let [r (protect (f))] (when (r 0) (r 1))))
 
-  (defn current-vd-guid
-    "Desktop id of the current virtual desktop, read from a window we know that is on it and answers (a parked one
-    may not). nil when there is none."
-    []
+  (defn vd-current?
+    "Is desktop `vd` the current one? Answered by a window we know that is NOT parked, lives on `vd` and still answers
+    Windows (a parked window may not). nil when no such window is known."
+    [vd]
     (var found nil)
     (each [id hwnd] (pairs num->hwnd)
       (when (and (nil? found) (nil? (get parked id)) (get win32 :desktop-guid))
-        (when (protect-val (fn [] (w :on-current-desktop? hwnd)))
-          (set found (protect-val (fn [] ((get win32 :desktop-guid) hwnd)))))))
+        (when (= vd (protect-val (fn [] ((get win32 :desktop-guid) hwnd))))
+          (def [ok here] (protect (w :on-current-desktop? hwnd)))
+          (when ok (set found (if here :yes :no))))))
     found)
 
   (defn on-current-desktop?
@@ -112,8 +113,10 @@
     (def n (protect-val (fn [] (when-let [r (w :root-of hwnd)] (w :hwnd->number r)))))
     (def p (and n (get parked n)))
     (if (and p (p :vd))
-      (let [cur (current-vd-guid)]
-        (if cur (= cur (p :vd)) (or (not ok) here)))
+      (case (vd-current? (p :vd))
+        :yes true
+        :no false
+        (or (not ok) here))
       (or (not ok) here)))
 
   (defn window-of [id]
