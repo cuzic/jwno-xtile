@@ -2,6 +2,7 @@
 (import ../src/core/geometry :as g)
 (import ../src/core/state :as st)
 (import ../src/core/update :as u)
+(import ../src/core/data :as d)
 
 (def screen (g/rect 0 0 1000 600))
 (defn fresh [] (st/make screen ["1" "2" "3"]))
@@ -621,3 +622,85 @@
   (is= s ((u/update s [:window-surfaced]) :state))
   (def once ((u/update s [:window-surfaced :m]) :state))
   (is= once ((u/update once [:window-surfaced :m]) :state)))
+
+# ---- ADR 0012: two monitors (stage 1b) ----------------------------------------------------------
+
+(def left (g/rect 0 0 1000 600))
+(def right (g/rect 1000 0 1000 600))
+(defn two [] (st/make [left right] ["1" "2" "3"]))     # screen 0 shows "1", screen 1 shows "2"
+
+(deftest "ADR 0012: each screen lays out its own workspace in its own rect; both are visible"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:window-opened :c "3"]))
+  (is= left ((st/placements s) :a))
+  (is= right ((st/placements s) :b))
+  (is= @[:a :b] (sort (array ;(st/vis-ids s))))
+  (is (st/visible-tag? s "2"))
+  (is (not (st/visible-tag? s "3"))))
+
+(deftest "ADR 0012: windows of both visible workspaces are shown, only the third is hidden"
+  (def [s fx] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:window-opened :c "3"]))
+  (def r (u/update s [:command :refresh]))
+  (is= [[:hide :c]] (tuple ;(filter |(= (first $) :hide) (r :effects))))
+  (is (find |(= $ [:show :a]) (r :effects)))
+  (is (find |(= $ [:show :b]) (r :effects))))
+
+(deftest "ADR 0012: goto (greedyView) swaps with the screen that shows the workspace; view only moves the focus"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:focus-changed :a]))
+  # goto 2: workspace 2 is on the right screen -> the two screens swap their workspaces
+  (def g (u/update s [:command :goto "2"]))
+  (is= "2" (st/current (g :state)))
+  (is= 0 (st/screen-of (g :state) "2"))
+  (is= 1 (st/screen-of (g :state) "1"))
+  # view 2: the focus goes to the right screen; nothing moves
+  (def v (u/update s [:command :view "2"]))
+  (is= 0 (st/screen-of (v :state) "1"))
+  (is= 1 (st/screen-of (v :state) "2"))
+  (is= "2" (st/current (v :state)))
+  (is= 1 ((v :state) :focused-screen)))
+
+(deftest "ADR 0012: goto a workspace nobody shows takes the focused screen; the other screen is untouched"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:window-opened :c "3"] [:focus-changed :a]))
+  (def g ((u/update s [:command :goto "3"]) :state))
+  (is= 0 (st/screen-of g "3"))
+  (is= 1 (st/screen-of g "2"))
+  (is (not (st/visible-tag? g "1"))))
+
+(deftest "ADR 0012: the OS focus on a window of the other screen moves the focus to that screen (no external, no stray)"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:focus-changed :a]))
+  (def r ((u/update s [:focus-changed :b]) :state))
+  (is= 1 (r :focused-screen))
+  (is (not (r :external-focus)))
+  (is (nil? (u/stray-id r)))
+  (is= :b (st/focused r)))
+
+(deftest "ADR 0012 M12-H1: a window on the OTHER screen is not stray: no reclaim, and close still works on it"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:focus-changed :a]))
+  (def b ((u/update s [:focus-changed :b]) :state))
+  (is (nil? (u/stray-id b)))
+  (is= [] ((u/update b [:command :reclaim-focus]) :effects))
+  (is= [[:close :b]] ((u/update b [:command :close]) :effects))
+  # while a window of a workspace NO screen shows is stray
+  (def [s2 _] (run (two) [:window-opened :a "1"] [:window-opened :c "3"] [:focus-changed :a]))
+  (def c ((u/update s2 [:focus-changed :c]) :state))
+  (is= :c (u/stray-id c)))
+
+(deftest "ADR 0012: a snapshot that adopts the OS focus moves the focused screen to the window's screen"
+  (def [s _] (run (two) [:focus-changed :b]))
+  (def r ((u/update s [:windows-observed [[:a "1"] [:b "2"]]]) :state))
+  (is= 1 (r :focused-screen))
+  (is (not (r :external-focus))))
+
+(deftest "ADR 0012: window-dragged acts on a window of any visible workspace, not on a hidden one"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:window-opened :c "3"]))
+  (def moved (g/rect 5 5 77 66))
+  (is (st/floating? ((u/update s [:window-dragged :b moved]) :state) :b))
+  (is (not (st/floating? ((u/update s [:window-dragged :c moved]) :state) :c))))
+
+(deftest "ADR 0012 M12-H1: stray-id looks at what is VISIBLE on any screen, not at the focused screen's workspace"
+  (def [s _] (run (two) [:window-opened :a "1"] [:window-opened :b "2"] [:window-opened :c "3"]))
+  # the OS focus is on :b (shown on the OTHER screen) while the focused screen is still screen 0
+  (def on-b (d/assoc s {:os-focus :b :external-focus false}))
+  (is= 0 (on-b :focused-screen))
+  (is (nil? (u/stray-id on-b)))
+  (def on-c (d/assoc s {:os-focus :c :external-focus false}))
+  (is= :c (u/stray-id on-c)))

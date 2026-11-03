@@ -47,11 +47,11 @@
     (is= [] (km :errors))
     (is= (length (k/default-bindings mod tags)) (length (km :keys)))))
 
-(deftest "default bindings cover every core command (xmonad leaves two unbound)"
+(deftest "default bindings cover every core command (xmonad leaves some unbound; :view has none, mod-N is greedyView)"
   (def km (k/build (k/default-bindings "Alt" tags) tags))
   (def bound (distinct (map |($ 1) (values (km :keys)))))
   (each name (keys u/command-args)
-    (unless (or (index-of name [:set-layout :shift-master :toggle-float])
+    (unless (or (index-of name [:set-layout :shift-master :toggle-float :view])
                 (= :internal (u/command-args name)))
       (is (index-of name bound)))))
 

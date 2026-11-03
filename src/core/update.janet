@@ -101,8 +101,8 @@
       # Jwno reports focus on a new hwnd BEFORE :window-opened, and does not
       # repeat it. If this is the window the OS already focused, adopt that
       # observation instead of waiting for one that will never come.
-      (if (and (= tag (st/current s)) (= id (s :os-focus)))
-        (d/assoc s2 {:external-focus false})
+      (if (and (st/visible-tag? s tag) (= id (s :os-focus)))
+        (-> s2 (st/set-current tag) (d/assoc {:external-focus false}))     # ADR 0012: the focus follows to that screen
         s2))))
 
 (defn- close-window [s id]
@@ -143,7 +143,7 @@
   (def tag (when (valid-id? id) (st/locate s id)))
   (cond
     (nil? tag) s
-    (= tag (st/current s)) s
+    (st/visible-tag? s tag) s
     (let [s2 (-> s
                  (st/update-ws tag |(ws/remove $ id))
                  (st/update-ws (st/current s) |(ws/append $ id)))]
@@ -173,9 +173,11 @@
     # a window we do not know (yet): remember it, so a following :window-opened
     # for the same id is recognised as the focused one
     (nil? tag) (d/assoc s {:external-focus true :os-focus id})
-    (not= tag (st/current s))
+    (not (st/visible-tag? s tag))
     (d/assoc s {:external-focus true :os-focus id})
+    # a window of a workspace some screen shows: the focus moves to that screen (xmonad's focusWindow)
     (-> s
+        (st/set-current tag)
         (st/update-ws tag |(ws/focus-id $ id))
         (d/assoc {:external-focus false :os-focus id}))))
 
@@ -252,10 +254,12 @@
         # The OS focus may have been observed before this window set was (at
         # startup, or a snapshot adding the focused window). That observation
         # is still valid: adopt it, as :window-opened does.
-        (if (and os (= (st/locate acc os) (st/current acc)))
-          (-> acc
-              (st/update-ws (st/current acc) |(ws/focus-id $ os))
-              (d/assoc {:external-focus false}))
+        (if (and os (st/locate acc os) (st/visible-tag? acc (st/locate acc os)))
+          (let [tag (st/locate acc os)]
+            (-> acc
+                (st/set-current tag)                                   # ADR 0012: the focus follows to that screen
+                (st/update-ws tag |(ws/focus-id $ os))
+                (d/assoc {:external-focus false})))
           acc)))))
 
 (defn- window-dragged
@@ -266,7 +270,7 @@
   (def tag (and (valid-id? id) (valid-rect? rect) (st/locate s id)))
   (cond
     (nil? tag) s
-    (not= tag (st/current s)) s
+    (not (st/visible-tag? s tag)) s
     (st/floating? s id) s
     (= rect ((st/placements s) id))
     (if (get-in s [:misfit id])
@@ -346,7 +350,7 @@
   (def id (s :os-focus))
   (when (and id (valid-id? id))
     (def tag (st/locate s id))
-    (when (and tag (not= tag (st/current s))) id)))
+    (when (and tag (not (st/visible-tag? s tag))) id)))
 
 (defn stray?  [s] (not (nil? (stray-id s))))
 
@@ -396,7 +400,7 @@
   (struct
     ;(mapcat |[$ :none]
               [;(keys ws-commands) ;(keys reorder-commands) :close :refresh])
-    :goto :tag :send :tag :set-layout :layout :toggle-float :none
+    :goto :tag :view :tag :send :tag :set-layout :layout :toggle-float :none
     :reassert-focus :internal :reclaim-focus :internal))   # :internal = issued by the shell, never bound to a key
 
 (defn- own-stray
@@ -405,9 +409,15 @@
   [s]
   (if-let [id (s :os-focus)] (d/assoc s {:stray-own {:id id}}) s))
 
-(defn- goto-tag [s tag]
+(defn- goto-tag
+  "`view?` false (the default `goto`, xmonad's mod-N = greedyView): a workspace shown on another screen is swapped
+  with this screen's. `view?` true (`:view`): the focus moves to the screen that shows it. A workspace nobody
+  shows is shown on the focused screen either way. With one screen both are the same (ADR 0012 D-3)."
+  [s tag view?]
   # :os-focus stays: the OS front window really is still the old one (an observation, ADR 0005)
-  (-> s (st/set-current tag) (d/assoc {:external-focus true}) own-stray))
+  (-> (if view? (st/set-current s tag) (st/greedy-view s tag))
+      (d/assoc {:external-focus true})
+      own-stray))
 
 (defn- send-focused
   "xmonad's `shift`: move the focused window to another workspace; the view
@@ -437,10 +447,10 @@
     (reorder-commands name)
     [(if (actionable? s) (st/update-current s (reorder-commands name)) s) []]
 
-    (= name :goto)
+    (index-of name [:goto :view])
     (let [tag (get args 0)]
       (if (and (valid-tag? s tag) (not= tag (st/current s)))
-        (let [s2 (goto-tag s tag)
+        (let [s2 (goto-tag s tag (= name :view))
               f (st/focused s2)
               # remember what we want focused: a later :reassert-focus may
               # restore it if the OS/Jwno overrides us (ADR 0009 R-10)
@@ -474,15 +484,20 @@
 
 (defn- id-set [ids] (from-pairs (map |[$ true] ids)))
 
-(defn- hidden-ids
-  "Windows on workspaces we are not looking at."
+(defn- tiled-vis-ids
+  "Ids of every tiled window on a visible workspace (all screens, ADR 0012)."
   [s]
-  (def vis (id-set ((st/current-ws s) :ids)))
+  (mapcat |(st/tiled-ids s (st/ws-of s $)) (st/visible-tags s)))
+
+(defn- hidden-ids
+  "Windows on workspaces no screen shows."
+  [s]
+  (def vis (id-set (st/vis-ids s)))
   (filter |(not (vis $)) (all-ids s)))
 
 (defn- all-places [s]
   (def p (st/placements s))
-  (map |[:place $ (p $)] (st/tiled-ids s (st/current-ws s))))
+  (map |[:place $ (p $)] (tiled-vis-ids s)))
 
 (defn- visibility-effects
   "ADR 0006 D-1/D-6. hide: left the visible workspace for another one, or appeared on one we are not
@@ -491,8 +506,8 @@
   from the model (closed, minimised, ghosts) get neither: they are not ours to hide."
   [old new]
   (def old-all (id-set (all-ids old)))
-  (def old-vis (id-set ((st/current-ws old) :ids)))
-  (def new-vis (id-set ((st/current-ws new) :ids)))
+  (def old-vis (id-set (st/vis-ids old)))
+  (def new-vis (id-set (st/vis-ids new)))
   (def hides
     (seq [tag :in (new :tags)
           :let [w (st/ws-of new tag)]
@@ -500,17 +515,16 @@
           :when (and (not (new-vis id)) (or (old-vis id) (not (old-all id))))]
       [:hide id]))
   (def shows
-    (seq [id :in ((st/current-ws new) :ids)
+    (seq [id :in (st/vis-ids new)
           :when (not (old-vis id))]     # ADR 0006 D-6: a window we forgot may still be parked
       [:show id]))
   [;hides ;shows])
 
 (defn- derive-effects [old new silent?]
   (def old-p (st/placements old))
-  (def new-w (st/current-ws new))
   (def new-p (st/placements new))
   (def effects @[;(visibility-effects old new)])
-  (each id (st/tiled-ids new new-w)
+  (each id (tiled-vis-ids new)
     (unless (= (old-p id) (new-p id))
       (array/push effects [:place id (new-p id)])))
   (def f (st/focused new))
@@ -568,7 +582,7 @@
           f (st/focused s2)]
       {:state s2
        :effects (tuple ;(map |[:hide $] (hidden-ids s2))
-                       ;(map |[:show $] ((st/current-ws s2) :ids))
+                       ;(map |[:show $] (st/vis-ids s2))
                        ;(all-places s2)
                        ;(if (and f (not (external? s2))) [[:focus f]] []))})
 

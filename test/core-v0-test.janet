@@ -9,10 +9,19 @@
 (import ./reference/core-v0/update :as u0)
 (import ./property-test :as pt)
 
+(defn- project-old [s] s)   # the frozen core keeps :current and :screen as plain keys
+
 (defn- project
-  "A state as the old core sees it: the keys the old core had, current/screen read through the accessors."
+  "A NEW state as the old core would have it: the keys the old core had, current/screen read through the accessors."
   [s]
-  (table/to-struct (merge (table ;(kvs s)) {:current (st/current s) :screen (st/screen s)})))
+  (def cur (st/current s))
+  (def scr (st/screen s))
+  (def t (table ;(kvs s)))
+  (put t :screens nil)
+  (put t :focused-screen nil)
+  (put t :current cur)
+  (put t :screen scr)
+  (table/to-struct t))
 
 (deftest "M-4: the new core and the frozen v0 core agree on every event of random sequences (single monitor)"
   (for seed 0 120
@@ -24,7 +33,7 @@
       (def e (pt/random-event rng))
       (def ra (u/update a e))
       (def rb (u0/update b e))
-      (unless (deep= (project (ra :state)) (project (rb :state)))
+      (unless (deep= (project (ra :state)) (project-old (rb :state)))
         (errorf "M-4 state differs after %q (seed %d step %d)" e seed step))
       (unless (deep= (ra :effects) (rb :effects))
         (errorf "M-4 effects differ after %q: new=%q old=%q (seed %d step %d)" e (ra :effects) (rb :effects) seed step))

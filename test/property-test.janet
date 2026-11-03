@@ -54,8 +54,16 @@
 (defn random-rules [rng]
   (tuple ;(seq [_ :range [0 (math/rng-int rng 4)]] (pick rng rule-pool))))
 
-(defn new-state [rng]
-  (st/make (first screens) tags (random-rules rng)))
+(def screen-pairs
+  [[(g/rect 0 0 1000 600) (g/rect 1000 0 1000 600)]
+   [(g/rect 0 0 1920 1080) (g/rect -1280 0 1280 720)]])
+
+(defn new-state
+  "One screen (the old behaviour) most of the time, two screens (ADR 0012) one time in three."
+  [rng]
+  (if (zero? (math/rng-int rng 3))
+    (st/make (pick rng screen-pairs) tags (random-rules rng))
+    (st/make (first screens) tags (random-rules rng))))
 
 (defn random-facts
   "Mostly valid facts; sometimes not even a dictionary."
@@ -125,7 +133,7 @@
 (defn check-invariants [s event]
   (unless (immutable? s)
     (errorf "I0 state contains mutable data after %q" event))
-  (def screen (s :screen))
+  (def screen (st/screen s))
   (def all (mapcat |(((s :workspaces) $) :ids) (s :tags)))
   (each id (keys (s :floating))
     (unless (index-of id all)
@@ -153,30 +161,39 @@
       (errorf "Q4 pending target %q is not in the stack after %q" (p :target) event))
     (unless (= (p :tag) (st/current s))
       (errorf "Q4 pending tag %q is not current after %q" (p :tag) event)))
-  (def w (st/current-ws s))
   (def p (st/placements s))
-  (def tiled (st/tiled-ids s w))
+  (def tiled (mapcat |(st/tiled-ids s (st/ws-of s $)) (st/visible-tags s)))
   (unless (= (length p) (length tiled))
     (errorf "I5 placement count mismatch after %q" event))
-  # F7: the layout sees the stack minus the floats, nothing else
-  (def stripped (reduce |(ws/remove $0 $1) w (filter |(st/floating? s $) (w :ids))))
-  (unless (deep= (table/to-struct (from-pairs (layout/arrange (w :layout) w screen (stripped :ids)))) p)
-    (errorf "F7 placements differ from the float-free workspace after %q" event))
-  (def rs (map |(p $) tiled))
-  (each r rs
-    (unless (and (>= (r :x) (screen :x)) (>= (r :y) (screen :y))
-                 (<= (+ (r :x) (r :w)) (+ (screen :x) (screen :w)))
-                 (<= (+ (r :y) (r :h)) (+ (screen :y) (screen :h)))
-                 (pos? (r :w)) (pos? (r :h)))
-      (errorf "I6 rect out of bounds after %q: %q in %q" event r screen)))
-  (unless (= (w :layout) :full)
-    (unless (empty? rs)
-      (unless (= (sum (map g/area rs)) (g/area screen))
-        (errorf "I7 tiling does not cover screen after %q" event)))
-    (for i 0 (length rs)
-      (for j (+ i 1) (length rs)
-        (when (g/overlap? (rs i) (rs j))
-          (errorf "I7 overlap after %q" event))))))
+  # per screen (ADR 0012): F7 the layout sees the stack minus the floats, I6 inside the screen, I7 tiling covers it
+  (each scr (s :screens)
+    (def w (st/ws-of s (scr :ws)))
+    (def rect (scr :rect))
+    (def stripped (reduce |(ws/remove $0 $1) w (filter |(st/floating? s $) (w :ids))))
+    (def mine (table/to-struct (from-pairs (layout/arrange (w :layout) w rect (stripped :ids)))))
+    (each id (st/tiled-ids s w)
+      (unless (= (mine id) (p id))
+        (errorf "F7 placement of %q differs from the float-free workspace after %q" id event)))
+    (def rs (map |(p $) (st/tiled-ids s w)))
+    (each r rs
+      (unless (and (>= (r :x) (rect :x)) (>= (r :y) (rect :y))
+                   (<= (+ (r :x) (r :w)) (+ (rect :x) (rect :w)))
+                   (<= (+ (r :y) (r :h)) (+ (rect :y) (rect :h)))
+                   (pos? (r :w)) (pos? (r :h)))
+        (errorf "I6 rect out of bounds after %q: %q in %q" event r rect)))
+    (unless (= (w :layout) :full)
+      (unless (empty? rs)
+        (unless (= (sum (map g/area rs)) (g/area rect))
+          (errorf "I7 tiling does not cover screen after %q" event)))
+      (for i 0 (length rs)
+        (for j (+ i 1) (length rs)
+          (when (g/overlap? (rs i) (rs j))
+            (errorf "I7 overlap after %q" event))))))
+  # M-2: every workspace is on at most one screen
+  (unless (= (length (distinct (st/visible-tags s))) (length (st/visible-tags s)))
+    (errorf "M-2 a workspace is shown on two screens after %q" event))
+  (unless (< -1 (s :focused-screen) (length (s :screens)))
+    (errorf "M-1 the focused screen is out of range after %q" event)))
 
 (defn- stack-ids [s] (mapcat |(((s :workspaces) $) :ids) (s :tags)))
 
@@ -253,7 +270,7 @@
                      (struct? rect) (int-ish? (get rect :x)) (int-ish? (get rect :y))
                      (int-ish? (get rect :w)) (int-ish? (get rect :h)) (pos? (get rect :w)) (pos? (get rect :h))))
     (def tag (and valid? (st/locate old id)))
-    (def acts? (and tag (= tag (st/current old)) (not (st/floating? old id))))
+    (def acts? (and tag (st/visible-tag? old tag) (not (st/floating? old id))))     # any screen (ADR 0012)
     (cond
       (not acts?)
       (unless (and (deep= s old) (empty? (r :effects)))
@@ -268,13 +285,13 @@
         (each k [:os-focus :external-focus]
           (unless (deep= (old k) (s k)) (errorf "D1 window-dragged changed %q" k)))
         (unless (= (st/current old) (st/current s)) (errorf "D1 window-dragged changed the current workspace"))
-        (unless (deep= ((st/current-ws old) :ids) ((st/current-ws s) :ids))
+        (unless (deep= ((st/ws-of old tag) :ids) ((st/ws-of s tag) :ids))
           (errorf "D1 window-dragged reordered the stack: %q" event))
         (unless (= (st/focused old) (st/focused s)) (errorf "D1 window-dragged moved the focus: %q" event))
         (when (find |(and (= (first $) :place) (= (get $ 1) id)) (r :effects))
           (errorf "D4 the dragged window was placed again: %q" event))))))
 
-(defn- vis-of [s] ((st/current-ws s) :ids))
+(defn- vis-of [s] (st/vis-ids s))
 
 (defn check-visibility [old r event]
   (def s (r :state))
@@ -318,7 +335,8 @@
   (def kind (first event))
   # F12d: never both; :focus-none only when the visible workspace is empty
   (when (and none? focus?) (errorf "F12d :focus and :focus-none together after %q" event))
-  (when (and none? (not (empty? (vis-of s)))) (errorf "F12d :focus-none with a non-empty workspace after %q" event))
+  # ADR 0012 M12-L2: "empty" means the workspace of the FOCUSED screen (another screen may still have windows)
+  (when (and none? (not (empty? ((st/current-ws s) :ids)))) (errorf "F12d :focus-none with a non-empty workspace after %q" event))
   # F12b: nothing is stolen when the OS focus is not on a known window of a hidden workspace
   (when (and marked? (not (u/stray? old))) (errorf "F12b a reclaim effect without a stray focus after %q" event))
   (when (and none? (not (u/stray? s)) (not marked?)) (errorf "F12b :focus-none without a stray focus after %q" event))
@@ -330,7 +348,7 @@
              (not (or focus? none?)))
     (errorf "F12a the OS focus stays on a parked window after %q" event))
   (when (and (= kind :command) (index-of (get event 1) [:goto :send :close :toggle-float])
-             (u/stray? s) (or (not= (st/current old) (st/current s)) (not= (vis-of old) (vis-of s)))
+             (u/stray? s) (or (not= (st/current old) (st/current s)) (not (deep= (sort (array ;(vis-of old))) (sort (array ;(vis-of s))))))
              (not (or focus? none?)))
     (errorf "F12a (command) the OS focus stays on a parked window after %q: fx=%q os=%q cur=%q tag=%q focused=%q ext=%q" event fx (s :os-focus) (st/current s) (st/locate s (s :os-focus)) (st/focused s) (s :external-focus))))
 
@@ -343,7 +361,7 @@
     (def id (get event 1))
     (def was (and (valid-id-test? id) (st/locate old id)))
     (cond
-      (or (nil? was) (= was (st/current old)))
+      (or (nil? was) (st/visible-tag? old was))     # unknown, or already shown on some screen (ADR 0012)
       (unless (= s old) (errorf "S-1 an unknown/visible window changed the state: %q" event))
       (do
         (unless (= (st/locate s id) (st/current s)) (errorf "S-1 the surfaced window is not on the current workspace: %q" event))

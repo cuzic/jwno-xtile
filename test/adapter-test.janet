@@ -371,7 +371,7 @@
   ((get (w :hooks) :monitor-updated) {:monitor {:work-area {:left 0 :top 0 :right 500 :bottom 400}}})
   (is= 0 (length (calls-of w :transform)))        # nothing runs inside the hook
   (flush! w)
-  (is= {:x 0 :y 0 :w 500 :h 400} ((state-of a) :screen))
+  (is= {:x 0 :y 0 :w 500 :h 400} (st/screen (state-of a)))
   (def [_ _ rect _] (last (calls-of w :transform)))
   (is= {:left 0 :top 0 :right 500 :bottom 400} rect))
 

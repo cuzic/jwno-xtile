@@ -127,4 +127,9 @@
 ## 複数モニタ（ADR 0012）
 - M-0（段階 1a、実装済み）`(s :current)`／`(s :screen)` の読み書きは `st/current`・`st/screen`・`st/set-current`・`st/set-screen` だけを通す。
 - M-4（実装済み）モニタが 1 つのとき、新しい Core は凍結した旧 Core（`test/reference/core-v0/`）と、全ての event の `:state`（`st/current`・`st/screen` で射影）と `:effects` が一致する（`test/core-v0-test.janet`）。
-- M-1〜M-3（段階 1b 以降）`:screens`／`:focused-screen` からの導出、各ワークスペースは高々 1 つのモニタ、`vis(s)` は全モニタの見えているワークスペースの窓の和集合。
+- M-1（段階 1b、実装済み）`:current`／`:screen` は State に無く、`:screens` と `:focused-screen` から導く（`st/current`・`st/screen`）。`:focused-screen` は範囲内。
+- M-2（実装済み）各ワークスペースは高々 1 つのモニタに見える。
+- M-3（実装済み）`vis(s)` は全モニタの見えているワークスペースの窓の和集合（`st/vis-ids`）。`:hide`／`:show`／`:place` はそれに対して導かれ、配置はモニタごとにそのモニタの矩形で計算される（I5〜I7 はモニタごと）。
+- 判定の書き換え（ADR 0012 の表）: `stray-id`・`window-dragged`・`open-window` の採用・`windows-observed` の採用・`window-surfaced` は「どれかのモニタに見えているか」で判定する。`focus-window` は、見えている窓なら
+  `:focused-screen` をその窓のモニタへ移し、external を下ろす。`goto` は `greedyView`（見えていれば入れ替え）、`:view` は見えているモニタへフォーカスを移すだけ。`[:focus-none]` は「フォーカスのあるモニタのワークスペースが空」のとき（F12d の改訂）。
+- 2 モニタの state は、プロパティテストの生成器の 3 分の 1 に入る（`test/property-test.janet`）。
