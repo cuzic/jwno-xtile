@@ -72,6 +72,7 @@
   [name params screen ids gap padding]
   (def inner (if (pos? padding) (inset screen padding) screen))
   (def placed (arrange name params inner ids))
-  (if (or (zero? gap) (= name :full))
+  # (Full and a single window need no case: every edge of their rects is on the boundary of `inner`, so nothing moves)
+  (if (zero? gap)
     placed
     (tuple ;(map (fn [[id r]] [id (shrink-edges r inner gap)]) placed))))
