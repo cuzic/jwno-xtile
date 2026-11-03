@@ -1,1 +1,1 @@
-^[0-9.]+ (installed|started|config-start|ffi|jw32-has "IsHung)|window-created|more than one
+window-created id=

@@ -7,7 +7,7 @@ foreach ($f in "taskbar.log", "contract-console.log", "contract-jwno.log", "cont
   $p = Join-Path $o $f
   "===== $f"
   if (Test-Path $p) {
-    Get-Content $p | Select-String -Pattern $pat  | Select-Object -First 16 | ForEach-Object { 
+    Get-Content $p | Select-String -Pattern $pat  | Select-Object -First 200 | ForEach-Object { 
       $t = $_.Line; if ($t.Length -gt 400) { $t.Substring(0, 400) } else { $t } }
   }
 }
