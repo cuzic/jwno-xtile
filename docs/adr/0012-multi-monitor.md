@@ -1,6 +1,6 @@
 # 0012. 複数モニタ: モニタごとの「見えているワークスペース」
 
-- 状態: Proposed（2026-11-02。Opus レビュー待ち。実機・複数モニタ環境は未検証）
+- 状態: Proposed（改訂 2、2026-11-02。Opus レビュー 1 回目の High 1・Med 6・Low 4 を反映。2 回目の確認待ち。複数モニタの実機は未検証）
 - 日付: 2026-11-02
 
 ## Context
@@ -54,3 +54,55 @@ xmonad は、モニタ（Screen）ごとに「見えているワークスペー�
 ## Consequences
 - 良い点: xmonad の複数モニタの意味に合う。単一モニタの利用者には変化が無い。
 - 悪い点: Core の変更が広い（`:current` を使う 24 か所、`vis` を前提にする不変条件）。複数モニタの実機が無く、DPI の違いやモニタの抜き差しの挙動は未検証。段階に分けて、段階 1 を完全な後方互換にすることでリスクを抑える。
+
+
+## 改訂 2（2026-11-02。Opus レビュー M12-H1・M1〜M6・L1〜L4 を反映。D-1〜D-6 と食い違う点はここが優先）
+
+### 「見えているか」と「フォーカスのあるモニタか」を分ける（M12-H1）
+`(st/visible-tag? s tag)`（どれかのモニタに見えている）と `(st/screen-of s tag)`（そのモニタの添字）、`(st/current s)`（フォーカスのあるモニタのワークスペース）を Core の唯一の判定関数にする。`(s :current)` との比較は全て次のどちらかに書き換える。
+
+| 規則 | 判定 |
+|---|---|
+| `stray-id`（`:os-focus` の窓が「見えていない」ワークスペースにある） | 見えている（どのモニタでも） |
+| `window-dragged` の対象（フロートにする、ドラッグの無視） | 見えている |
+| `visibility-effects`（`:hide`／`:show`） | 見えている（`vis(s)` の和集合） |
+| `windows-observed` の前面の採用、`open-window` の external の解除 | 見えている（その窓のモニタへ `:focused-screen` を移す） |
+| `send-focused` の宛先の可否 | 宛先が現在のワークスペースと違えばよい（別のモニタに見えているものも許す） |
+| `focus-window`（OS のフォーカスの観測） | 見えている窓なら `:focused-screen` をそのモニタへ移し、external を下ろす（xmonad の `focusWindow`。ADR 0007 (a) と整合）。見えていなければ external |
+| `focused`／`actionable?`、Q5（`:focus` の対象）、`reassert-focus`、`settle-pending` | フォーカスのあるモニタ |
+| `stray-effect` の「空なら `[:focus-none]`」 | フォーカスのあるモニタのワークスペースが空（M12-L2。他のモニタに窓があっても sink へ。sink は 1×1 で (-32000) にあり、どのモニタとも結び付かない） |
+| `:follow`、`goto` の可否、`desktop-changed` | フォーカスのあるモニタ（`goto` は D-3 の改訂のとおり） |
+Core の原則（`update.janet` 冒頭）を「`:focused-screen` は観測（見えている窓へのフォーカス）か `goto`／`focus-screen` でだけ変わる」に改める。段階 1 の合格条件に、「2 モニタの state で、全ての event の後に `stray` が『見えていない窓』だけを指す」を加える。
+
+### 状態にミラーを保存しない（M12-M1）。段階 1 を 1a・1b に分ける
+`:current`／`:screen` は State から外し、`st/current`・`st/screen`（`:screens` と `:focused-screen` から導く関数）にする。書き込みは `st/set-current`（フォーカスのあるモニタの `ws` を変える。そのタグが他のモニタに見えていれば `:focused-screen` を移す）に一本化する。
+- **段階 1a（純粋なリファクタ）**: `(s :current)`／`(s :screen)` の読み・書きを全て `st/current`・`st/screen`・`st/set-current` に置き換える。State の表現はまだ `:current`／`:screen` のまま（モニタ 1 つ）。**既存のテストは、直接 `(s :current)` を読む箇所だけ `st/current` に直す以外は無変更で通る**。振る舞いは変えない。
+- **段階 1b**: 表現を `:screens`／`:focused-screen` に替える。
+
+### `goto` は `greedyView` を既定にする（M12-M2）
+xmonad の既定の `mod-N` は `greedyView`。`goto tag` は、`tag` が別のモニタに見えていれば**現在のモニタと入れ替える**（両方の窓に `:place`、`:hide`／`:show` は出ない）、見えていなければ現在のモニタに表示する。`view`（見えているモニタへフォーカスを移すだけ）は別のコマンド `:view tag`。
+単一モニタでは `goto`＝今の `goto`。`xmonad-model.janet` の差分テストに `greedyView` と `view` の両方を入れる。
+
+### モニタの識別と抜き差し（M12-M3）
+モニタの識別子は Jwno の `:device`（デバイス名）。`[:screens-changed [{:device d :rect r} …]]` の処理: (1) 同じ `:device` のモニタには**同じ `ws` を残す**、(2) 消えたモニタの `ws` は見えなくなる（hidden。窓は park で失われない）、
+(3) 新しいモニタには、見えていないワークスペースの先頭を割り当てる。`:focused-screen` は `:device` で持ち、消えたら主モニタへ。添字は表示の順序（左上から）にだけ使い、状態の識別子にしない。
+xmonad の `rescreen`（X の画面の順で割り当て直す）との違いを ADR 0007 の差異の表に足す。
+
+### 新しい窓の行き先は 1 つの規則（M12-M4）
+新しい窓（`window-seen`／`window-opened`／snapshot の未知の窓）は、xmonad の `manage` と同じく**フォーカスのあるモニタのワークスペース**へ入れる（窓の中心は使わない。event の到着順に依存しない）。窓の中心でモニタを決めるのは、**起動時の最初の snapshot（`adopt-existing!`）だけ**で、
+どのモニタにも含まれない窓（画面外・最小化）は主モニタへ。`:hidden-from` は中心より優先。D-4 の「窓の中心を含むモニタ」の記述を、この規則で置き換える。
+
+### モニタをまたぐドラッグ（M12-M5）
+`[:window-dragged id rect]` の rect の中心が別のモニタにあれば、窓をそのモニタの見えているワークスペースへ移す（xmonad の `float` と同じ）。フロートにするのは今のまま。
+
+### テスト計画（M12-M6）
+- **M-4 の直接のテスト**: 段階 1a の着手前の `src/core/` を `test/reference/core-v0/` に**凍結して写し**（`./` の import だけなので、そのまま読み込める）、単一モニタの state に対するランダムな event の列で、新旧の `update` の `:state`（`:screens`・`:focused-screen` を除く射影）と `:effects` が一致することを検査する。
+- `test/xmonad-model.janet` を拡張する: `view`／`greedyView`／`shift`／`focusScreen`／`rescreen` を StackSet.hs から転記。プロパティテストに M-1〜M-3、「各モニタの配置はそのモニタの矩形を埋め、外に出ない」、「stray は見えていない窓だけ」、「2 モニタでの H-c のミラー」を入れる。
+
+### その他（M12-L1〜L4）
+`window-surfaced`（ADR 0006 改訂 5）は、窓が実際にあるモニタ（中心）の見えているワークスペースへ入れる（段階 2 で更新）。park の往復の後の大きさ（DPI の違うモニタ。`WM_DPICHANGED`）を契約テストの項目に入れる（unverified on Windows）。
+`:screens-changed` の直後の一定時間（例: 10 秒）は、再 park の回数を数えない（Windows がモニタの変化で窓を救出するため。ADR 0006 R5-M1 と同じ扱い）。
+
+### 採らなかった案
+- **モニタごとに独立した State**（Core は単一画面のまま、モニタの数だけ持つ）: 実装は小さいが、ワークスペースがモニタに固定され、`send` で別のモニタへ送る・`goto` で別のモニタのワークスペースを呼ぶ（`greedyView`）ができない。ADR 0007 の xmonad 互換の方針に反する。
+- **xmonad の StackSet の形をそのまま写す**（`:current` を Screen、`:visible` を Screen の列、`:hidden` をワークスペースの列）: 差分テストは直接になるが、`:screens`＋`:focused-screen` と等価で、既存の State（`:workspaces`）との整合は `:screens` のほうが小さい変更で済む。
