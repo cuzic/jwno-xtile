@@ -22,6 +22,7 @@
            :desktops @[]         # [index guid name]
            :refreshes 0
            :last-vd nil
+           :monitors nil         # set to [[{:device :work-area} ...] main-idx] for a multi-monitor desktop
            :vd-fail @{}          # ptr -> true: GetWindowDesktopId fails (a window without a taskbar button)
            :hooks @{}})
   (defn rec [& c] (array/push (w :calls) c))
@@ -50,7 +51,9 @@
       :get-all-windows (fn [self] (values (w :windows)))})
   (def wm-proto
     @{:find-hwnd (fn [self hwnd] ((w :windows) (hwnd :ptr)))
-      :enumerate-monitors (fn [self] [[{:work-area {:left 0 :top 0 :right 1000 :bottom 600}}] 0])
+      :enumerate-monitors (fn [self]
+                            (or (w :monitors)
+                                [[{:device "\\\\.\\DISPLAY1" :work-area {:left 0 :top 0 :right 1000 :bottom 600}}] 0]))
       :set-focus (fn [self node] (rec :wm-set-focus node))
       :transform-hwnd (fn [self hwnd rect &opt tags]
                         (rec :transform-hwnd (hwnd :ptr) rect)
@@ -1120,3 +1123,58 @@
   ((get (a :ctx) :hide) 4)
   (put (w :vd-fail) 4 true)
   (is= [false :err] (:call-method vd :GetWindowDesktopId [(hw 4)])))
+
+# ---- ADR 0012 stage 3: the adapter with several monitors (opt in) ----------------------------------------------
+
+(defn two-monitors [w]
+  (put w :monitors [[{:device "\\\\.\\DISPLAY2" :work-area {:left 1000 :top 0 :right 2000 :bottom 600}}
+                     {:device "\\\\.\\DISPLAY1" :work-area {:left 0 :top 0 :right 1000 :bottom 600}}] 1]))
+
+(deftest "stage 3: without :multi-monitor? the adapter still sees one screen (the primary monitor)"
+  (def w (fake-world))
+  (two-monitors w)
+  (def a (install-adapter w))
+  ((a :start))
+  (is= 1 (length ((state-of a) :screens)))
+  (is= {:x 0 :y 0 :w 1000 :h 600} (st/screen (state-of a))))
+
+(deftest "stage 3: with :multi-monitor? every monitor is a screen, in display order, with its device name"
+  (def w (fake-world))
+  (two-monitors w)
+  (def a (install-adapter w {:multi-monitor? true}))
+  ((a :start))
+  (def s (state-of a))
+  (is= 2 (length (s :screens)))
+  (is= {:x 0 :y 0 :w 1000 :h 600} (((s :screens) 0) :rect))                # left to right, not Jwno's order
+  (is= "\\\\.\\DISPLAY1" (((s :screens) 0) :device))
+  (is= {:x 1000 :y 0 :w 1000 :h 600} (((s :screens) 1) :rect))
+  (is= @["1" "2"] (map |($ :ws) (s :screens))))
+
+(deftest "stage 3: a monitor change (the :monitor-updated hook) tells the core which monitors there are"
+  (def w (fake-world))
+  (def a (install-adapter w {:multi-monitor? true}))
+  ((a :start))
+  (is= 1 (length ((state-of a) :screens)))
+  (two-monitors w)                                                    # a second monitor is plugged in
+  ((get (w :hooks) :monitor-updated) @{:monitor {:work-area {:left 0 :top 0 :right 1000 :bottom 600}}})
+  (flush! w)
+  (is= 2 (length ((state-of a) :screens))))
+
+(deftest "stage 3: adopt-existing! takes in windows of every monitor when :multi-monitor? (one monitor: only the primary)"
+  (def w (fake-world))
+  (two-monitors w)                                                    # DISPLAY1 (0..1000, primary) and DISPLAY2 (1000..2000)
+  (array/push (w :top) 5 6 7)
+  (put (w :rects) 5 {:left 100 :top 100 :right 400 :bottom 400})     # on DISPLAY1
+  (put (w :rects) 6 {:left 1200 :top 100 :right 1500 :bottom 400})   # on DISPLAY2
+  (put (w :rects) 7 {:left 5000 :top 100 :right 5300 :bottom 400})   # on no monitor
+  (def a (install-adapter w {:multi-monitor? true}))
+  ((a :start))
+  (is= @[5 6] (map |($ 1) (calls-of w :window-opened)))
+  (def w2 (fake-world))
+  (two-monitors w2)
+  (array/push (w2 :top) 5 6)
+  (put (w2 :rects) 5 {:left 100 :top 100 :right 400 :bottom 400})
+  (put (w2 :rects) 6 {:left 1200 :top 100 :right 1500 :bottom 400})
+  (def a2 (install-adapter w2))
+  ((a2 :start))
+  (is= @[5] (map |($ 1) (calls-of w2 :window-opened))))

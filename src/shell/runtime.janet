@@ -8,6 +8,7 @@
 #              :foreground-is? (id) -> bool   (exact match)
 #              :current-desktop () -> tag|nil
 #              :enumerate () -> [[id tag-or-nil facts] ...]   :work-area () -> rect
+#              :monitors () -> [{:device name :rect work-area} ...]   (optional; ADR 0012: then it replaces :work-area)
 #   misc:      :later (seconds thunk)  :log (level msg)  :notify (kind id)
 #   config:    :reassert? (default true) -- ADR 0009 R-10 switch (false = mitigation A only)
 # Any port function may throw; the runtime protects every call.
@@ -211,8 +212,11 @@
   (unless (rt :busy)
     (put rt :busy true)
     (defer (put rt :busy false)
-      (def [ok1 area] (call rt :work-area))
-      (when ok1 (process-one rt [:screen-changed area]))
+      (if (get (rt :ctx) :monitors)
+        (let [[okm mons] (call rt :monitors)]
+          (when okm (process-one rt [:screens-changed mons])))
+        (let [[ok1 area] (call rt :work-area)]
+          (when ok1 (process-one rt [:screen-changed area]))))
       # align the core's :current with the OS before any window is placed or focused;
       # otherwise the first :focus could make the OS switch desktops (ADR 0010 N1)
       (def [okd tag] (call rt :current-desktop))

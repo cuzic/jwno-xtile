@@ -147,6 +147,16 @@
     (def [monitors main-idx] (:enumerate-monitors wm))
     (jwno->rect (get-in monitors [main-idx :work-area])))
 
+  (def multi? (get opts :multi-monitor? false))     # ADR 0012 stage 3: opt in; unverified on a real multi-monitor desktop
+
+  (defn monitors
+    "ADR 0012: every monitor as {:device name :rect work-area}, in display order (left to right, then top to bottom).
+    `:device` is Jwno's szDevice (the identity that keeps a workspace on its monitor across plug/unplug)."
+    []
+    (def [ms _main] (:enumerate-monitors wm))
+    (def list (seq [m :in ms] {:device (string (or (m :device) "")) :rect (jwno->rect (m :work-area))}))
+    (sort-by |[(($ :rect) :x) (($ :rect) :y)] list))
+
   (defn foreground [] (norm (w :foreground-hwnd)))
 
   (defn visible-rect [win] (jwno->rect (:get-rect win true)))
@@ -317,6 +327,7 @@
       :foreground-is? (fn [id] (and id (= id (foreground))))
       :enumerate enumerate
       :work-area work-area
+      :monitors (when multi? monitors)
       :later later
       :log log-fn
       :notify (fn [kind id]
@@ -325,7 +336,7 @@
       :reassert? (get opts :reassert? false)})   # R-10 answered a Jwno refocus after an OS desktop switch; :goto no longer causes one
 
   # ---- core state + runtime ---------------------------------------------------------------
-  (set rtm (rt/make ctx (st/make (work-area) tags (get opts :rules []))))
+  (set rtm (rt/make ctx (st/make (if multi? (map |($ :rect) (monitors)) (work-area)) tags (get opts :rules []))))
 
   # ---- Jwno must not place windows itself (ADR 0010 D2) ------------------------------------
   (defn pin! [win] (put (in win :tags) :swp-flags swp))
@@ -413,7 +424,12 @@
                (def [ok wa] (protect (jwno->rect (get-in top-frame [:monitor :work-area]))))
                (def area (if (and ok wa) wa (work-area)))
                (spawn (fn []
-                        (dispatch! [:screen-changed area])
+                        (if multi?
+                          (let [[okm mons] (protect (monitors))]
+                            (if okm
+                              (dispatch! [:screens-changed mons])
+                              (log-fn :warn (string "monitors: " mons))))
+                          (dispatch! [:screen-changed area]))
                         (dispatch! [:command :refresh])))))
 
   # ---- user drags / resizes (ADR 0010 D9) ---------------------------------------------------
@@ -621,18 +637,19 @@
     (real run 3: a window that existed before Jwno started was never managed). Offer every other
     top-level window of this desktop to Jwno's own path (its filters and hooks decide)."
     []
-    (def wa (work-area))
+    # one monitor: its work area. Several (ADR 0012, opt in): the centre may be on any of them
+    (def areas (if multi? (map |($ :rect) (monitors)) [(work-area)]))
     (def pf (get win32 :window-rect))
     (each hwnd (top-level-hwnds)
       (def [ok err]
         (protect
           (when (and (not (:find-hwnd (in wm :root) hwnd)) (on-current-desktop? hwnd) (not (sink-number? hwnd)))
             (cond
-              # Opus M1 (e): the core has one monitor; a window whose centre is elsewhere is not ours
+              # Opus M1 (e): a window whose centre is on none of the monitors the core knows is not ours
               (let [r (and pf (pf hwnd))]
                 (and r (let [cx (div (+ (r :left) (r :right)) 2) cy (div (+ (r :top) (r :bottom)) 2)]
-                         (or (< cx (wa :x)) (>= cx (+ (wa :x) (wa :w))) (< cy (wa :y)) (>= cy (+ (wa :y) (wa :h)))))))
-              (log-fn :debug "adopt-existing: leaving a window of another monitor alone")
+                         (not (some |(and (>= cx ($ :x)) (< cx (+ ($ :x) ($ :w))) (>= cy ($ :y)) (< cy (+ ($ :y) ($ :h)))) areas)))))
+              (log-fn :debug "adopt-existing: leaving a window outside every monitor alone")
               (let [zoomed (w :zoomed? hwnd)]
                 # Opus F-M3: Jwno's transform un-maximises a window it takes in; a maximised window left out
                 # would be un-maximised at its first focus anyway and covers every workspace meanwhile. Take
