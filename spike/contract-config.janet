@@ -104,7 +104,7 @@
                    :keymap keymap
                    :bindings (default-bindings "Alt" default-tags)
                    :poll-seconds 2
-                   :hide-taskbar-button true}))
+                   :hide-taskbar-button (not (os/getenv "XTILE_NO_HIDE_TAB"))}))
     ([e f]
      (rec :install-error (string e))
      (debug/stacktrace f e ""))))

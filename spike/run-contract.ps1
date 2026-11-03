@@ -375,6 +375,9 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   Start-Sleep 2
 
   # ---- the taskbar button of a parked window (ADR 0011 stage 0): the calls go through and report S_OK ----
+  if ($env:XTILE_NO_HIDE_TAB) {
+    Check "CT-24" "INFO" "skipped: run with the default options (no :hide-taskbar-button)" ""
+  } else {
   [void](Cmd ":xtile :goto 6")
   Start-Sleep 3
   $tdel = @(LogLines | Where-Object { $_ -match 'taskbar-delete hwnd=.* -> 0' })
@@ -386,6 +389,7 @@ if ($j.HasExited -or $imports.Count -gt 0 -or -not $started) {
   [void](WaitFor { -not (Parked $i0) } 8)
   $tadd = @(LogLines | Where-Object { $_ -match 'taskbar-add hwnd=.* -> 0' })
   Check "CT-24b" ($(if ($tadd.Count -gt 0) { "PASS" } else { "FAIL" })) "... and given back when the window returns (AddTab returned S_OK)" ("ok=" + $tadd.Count)
+  }
   Start-Sleep 2
 
   # ---- gap and padding (ADR 0013): the visible frame follows the spaced layout, and 0 puts everything back ----

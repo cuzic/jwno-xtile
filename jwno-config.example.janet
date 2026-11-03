@@ -29,8 +29,8 @@
     jwno/context w32/win32
     {:log xtile-log
      :keymap keymap
-     # Alt-based xmonad bindings; change "Alt" to "Win" for the Win key
-     :bindings (km/default-bindings "Alt" adapter/default-tags)
+     # xmonad bindings on the Win key; use "Alt" for Alt (it overrides Alt+Tab, Alt+Space and menu accelerators)
+     :bindings (km/default-bindings "Win" adapter/default-tags)
      # user rules for the tile / float / ignore decision (ADR 0008)
      :rules [{:match {:class "#32770"} :action :float}]
      :poll-seconds 2

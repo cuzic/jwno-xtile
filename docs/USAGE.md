@@ -11,7 +11,7 @@ not verified on a real desktop is marked **(unverified)**.
 - Workspaces `1`..`9`. One is visible per monitor. A window of any other workspace is parked off-screen.
 - `goto` (Alt+N) is xmonad's `greedyView`: if the workspace is shown on another monitor the two monitors swap.
 
-## Default keys (`Alt`; change `"Alt"` to `"Win"` in the config for the Win key)
+## Default keys (shown with `Alt`; the example config uses `"Win"`, change it in `:bindings`)
 **Alt as the modifier overrides Windows' own Alt+Tab, Alt+Space (window menu; Alt+Space, M moves a window with the keyboard) and
 the Alt menu accelerators of many apps (Alt+H help, Alt+E edit, ...), and Alt+Enter in consoles (unverified).** Use `"Win"` if
 that matters to you.

@@ -10,6 +10,10 @@ on:
         type: choice
         default: windows-2022
         options: [windows-2022, windows-2025, windows-latest, windows-11-arm]
+      default_config:
+        description: "Contract tests with the adapter's default options (no :hide-taskbar-button)"
+        type: boolean
+        default: false
 
 env:
   WIN_SDK_VERSION: "10.0.26100.0"
@@ -122,6 +126,8 @@ jobs:
         if: always()
         continue-on-error: true
         shell: pwsh
+        env:
+          XTILE_NO_HIDE_TAB: ${{ inputs.default_config && '1' || '' }}
         run: ./xtile/spike/run-contract.ps1 -Jwno "${{ env.JWNO_DIR }}\build\jwno.exe" -RepoRoot "${{ github.workspace }}\xtile" -Config "${{ github.workspace }}\xtile\spike\contract-config.janet" -Out spike-out
 
       - name: Run Jwno with the probe config
