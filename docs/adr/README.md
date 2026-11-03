@@ -16,7 +16,7 @@
 | [0009](0009-shell-runtime-and-port.md) | Shell は「ポート越しの実行系」と Jwno アダプタに分ける | **Accepted**（runtime と C は実装済み。緩和策 A+C は暫定。アダプタ未実装） |
 | [0010](0010-jwno-adapter.md) | Jwno アダプタ: ポートの実装、フック→event の変換、Jwno との分担 | **Accepted**（段階 1 の adapter はフェイクで検査済み。win32 と実機は未検証。0004 は契約テストまで Proposed） |
 | [0011](0011-sw-hide.md) | `:sw-hide`: ワークスペースを `SW_HIDE` で隠す opt-in モード | **Accepted**（Opus 3 回で収束。実装は段階 0 の結果次第） |
-| [0012](0012-multi-monitor.md) | 複数モニタ: モニタごとの「見えているワークスペース」 | Proposed（Opus レビュー待ち） |
+| [0012](0012-multi-monitor.md) | 複数モニタ: モニタごとの「見えているワークスペース」 | **Accepted**（Opus 2 回で収束。実装は段階 1a から） |
 
 レビュー履歴: 2026-10-31 Opus 1 回目（18 件）→ 反映。2 回目（R1〜R13, High 3）→ 反映。3 回目（S1〜S10, High 2）→ 反映。4 回目（T1〜T3）→ 反映。5 回目: 新規の High/Med なし、収束。
 0001・0002・0005・0007 を Accepted に。0003 は Stop フック設定後に Accepted（2026-10-31）。0004 は実機の確認後に Accepted（2026-11-01）。
