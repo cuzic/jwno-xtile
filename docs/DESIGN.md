@@ -57,8 +57,8 @@ Window ids are opaque to the core (the shell uses hwnd numbers). Rects are
   transitions never mention rendering and cannot forget to re-tile.
 - **Observation principle (ADR 0005):** `:focus-changed` / `:desktop-changed`
   report what the OS already did; they update the model but never emit
-  `:focus`. `:external-focus` is cleared only by observations; `:current`
-  changes only on `:desktop-changed` or `:goto`.
+  `:focus`. `:external-focus` is cleared only by observations; The visible
+  workspace of a screen changes on commands, `:desktop-changed`, an observed focus and `:follow` (ADR 0012).
 - **xmonad semantics** match StackSet.hs exactly (ADR 0007), verified by a
   differential test against `test/xmonad-model.janet`.
 - **Layouts** are `(arrange name params screen ids) -> [[id rect]...]`; Wide is
